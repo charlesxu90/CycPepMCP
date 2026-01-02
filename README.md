@@ -33,7 +33,7 @@ A comprehensive toolkit for cyclic peptide engineering, non-natural amino acid i
 
 ### Prerequisites
 
-- Python 3.9+
+- Python 3.10+
 - Claude Code CLI installed and configured
 
 ### Install CycPepMCP
