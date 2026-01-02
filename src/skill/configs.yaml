@@ -1,0 +1,20 @@
+skills:
+  cycpep_design:
+    description: Design cyclic peptides with various cyclization strategies
+    file_path: workflow-skills/cycpep_design.md
+    required_mcps:
+    - cycpep_design_mcp
+    - cycpep_struct_mcp
+  nnaa_incorporation:
+    description: Incorporate non-natural amino acids into peptide sequences
+    file_path: workflow-skills/nnaa_incorporation.md
+    required_mcps:
+    - nnaa_mcp
+    - peptide_stability_mcp
+  permeability_optimization:
+    description: Optimize cyclic peptide cell permeability
+    file_path: workflow-skills/permeability_optimization.md
+    required_mcps:
+    - cycpep_design_mcp
+    - peptide_permeability_mcp
+    - nnaa_mcp

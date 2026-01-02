@@ -1,0 +1,622 @@
+# Step 5: Extract Clean Scripts for MCP Functions
+
+## Role
+You are an expert Python developer specializing in creating clean, minimal, and self-contained function libraries for cyclic peptide computational tools. Your mission is to extract the core functionality from the verified use cases (Step 4) into clean scripts that:
+1. **Minimize dependencies** - Only import what's absolutely necessary
+2. **Reduce reliance on repo code** - Inline or simplify repo functions where possible
+3. **Are self-contained** - Each script should work independently
+4. **Are MCP-ready** - Easy to wrap as MCP tools in the next step
+
+## Input Parameters
+- `repo/`: Repository codebase directory
+- `examples/`: Verified use case scripts from Step 4
+- `examples/data/`: Demo data from Step 3
+- `reports/step3_use_cases.md`: Use cases documentation
+- `reports/step4_execution.md`: Execution results from Step 4
+- `env/`: Main conda environment
+- `env_py{version}/`: Legacy environment (if exists)
+
+## Prerequisites
+- All use cases in `examples/` have been verified to work (Step 4)
+- Read `reports/step4_execution.md` to understand which use cases are successful
+
+## Design Principles
+
+### 1. Dependency Minimization
+```python
+# BAD: Importing entire library for one function
+from big_library import everything
+result = everything.utils.helpers.process(data)
+
+# GOOD: Import only what's needed or inline simple functions
+from big_library.core import process  # Direct import
+# OR: Inline if function is simple
+def process(data):
+    # Inlined implementation
+    return processed_data
+```
+
+### 2. Reduce Repo Reliance
+```python
+# BAD: Deep dependency on repo structure
+import sys
+sys.path.insert(0, "repo/library/src/submodule")
+from internal.helpers import complex_function
+
+# GOOD: Extract and simplify core logic
+def complex_function(input_data):
+    """Simplified version of repo's complex_function.
+
+    Original: repo/library/src/submodule/internal/helpers.py
+    Simplified to remove unnecessary features for MCP use case.
+    """
+    # Core logic extracted and simplified
+    return result
+```
+
+### 3. Configuration Over Code
+```python
+# BAD: Hardcoded paths and parameters scattered in code
+model_path = "/absolute/path/to/model.pt"
+default_params = {"lr": 0.001, "epochs": 100}
+
+# GOOD: Centralized configuration
+# configs/use_case_config.yaml or configs/use_case_config.json
+CONFIG = {
+    "model_path": "models/model.pt",  # Relative path
+    "default_params": {"lr": 0.001, "epochs": 100},
+    "input_format": "smiles",
+    "output_format": "csv"
+}
+```
+
+## Tasks
+
+### Task 1: Analyze Use Case Dependencies
+
+For each verified use case in `examples/`:
+
+1. **List All Imports**
+   ```bash
+   # Extract imports from each script
+   grep -E "^import |^from " examples/use_case_*.py
+   ```
+
+2. **Categorize Dependencies**
+   - **Essential**: Core functionality (numpy, pandas, rdkit, torch)
+   - **Repo-specific**: Imports from `repo/` directory
+   - **Utilities**: Helper functions that can be inlined
+   - **Optional**: Features that can be removed for minimal version
+
+3. **Document Dependency Tree**
+   ```
+   use_case_1_predict_structure.py
+   ├── Essential: numpy, rdkit, torch
+   ├── Repo: repo.model.predict() -> Can be simplified
+   └── Utility: repo.utils.parse_smiles() -> Inline
+   ```
+
+### Task 2: Extract Core Functions to Scripts
+
+For each use case, create a clean script in `scripts/`:
+
+1. **Script Structure**
+   ```python
+   #!/usr/bin/env python3
+   """
+   Script: <use_case_name>.py
+   Description: <what this script does for cyclic peptides>
+
+   Original Use Case: examples/<original_script>.py
+   Dependencies Removed: <list of inlined/removed dependencies>
+
+   Usage:
+       python scripts/<use_case_name>.py --input <input_file> --output <output_file>
+
+   Example:
+       python scripts/<use_case_name>.py --input examples/data/sample.smi --output results/output.csv
+   """
+
+   # ==============================================================================
+   # Minimal Imports (only essential packages)
+   # ==============================================================================
+   import argparse
+   from pathlib import Path
+   from typing import Union, Optional, Dict, Any, List
+   import json
+
+   # Essential scientific packages (if needed)
+   import numpy as np
+   from rdkit import Chem
+   from rdkit.Chem import AllChem, Descriptors
+   # import torch  # Only if ML is required
+
+   # ==============================================================================
+   # Configuration (extracted from use case)
+   # ==============================================================================
+   DEFAULT_CONFIG = {
+       "param1": "default_value",
+       "param2": 100,
+       # Add all configurable parameters here
+   }
+
+   # ==============================================================================
+   # Inlined Utility Functions (simplified from repo)
+   # ==============================================================================
+   def parse_smiles(smiles: str) -> Optional[Chem.Mol]:
+       """Parse SMILES string to RDKit molecule. Simplified from repo/utils/io.py"""
+       mol = Chem.MolFromSmiles(smiles)
+       if mol is None:
+           return None
+       return mol
+
+   def validate_cyclic_peptide(mol: Chem.Mol) -> bool:
+       """Validate that molecule is a cyclic peptide."""
+       # Check for ring structure
+       ring_info = mol.GetRingInfo()
+       if ring_info.NumRings() == 0:
+           return False
+       # Additional validation logic
+       return True
+
+   def save_output(data: Any, file_path: Path) -> None:
+       """Save output file. Simplified from repo/utils/io.py"""
+       # Inlined implementation
+       pass
+
+   # ==============================================================================
+   # Core Function (main logic extracted from use case)
+   # ==============================================================================
+   def run_<use_case_name>(
+       input_file: Union[str, Path],
+       output_file: Optional[Union[str, Path]] = None,
+       config: Optional[Dict[str, Any]] = None,
+       **kwargs
+   ) -> Dict[str, Any]:
+       """
+       Main function for <use case description>.
+
+       Args:
+           input_file: Path to input file (SMILES, SDF, or PDB)
+           output_file: Path to save output (optional)
+           config: Configuration dict (uses DEFAULT_CONFIG if not provided)
+           **kwargs: Override specific config parameters
+
+       Returns:
+           Dict containing:
+               - result: Main computation result
+               - output_file: Path to output file (if saved)
+               - metadata: Execution metadata
+
+       Example:
+           >>> result = run_<use_case_name>("input.smi", "output.csv")
+           >>> print(result['output_file'])
+       """
+       # Setup
+       input_file = Path(input_file)
+       config = {**DEFAULT_CONFIG, **(config or {}), **kwargs}
+
+       if not input_file.exists():
+           raise FileNotFoundError(f"Input file not found: {input_file}")
+
+       # Load input
+       data = load_input(input_file)
+
+       # Core processing (extracted and simplified from use case)
+       result = process_core_logic(data, config)
+
+       # Save output if requested
+       output_path = None
+       if output_file:
+           output_path = Path(output_file)
+           output_path.parent.mkdir(parents=True, exist_ok=True)
+           save_output(result, output_path)
+
+       return {
+           "result": result,
+           "output_file": str(output_path) if output_path else None,
+           "metadata": {
+               "input_file": str(input_file),
+               "config": config
+           }
+       }
+
+   # ==============================================================================
+   # CLI Interface
+   # ==============================================================================
+   def main():
+       parser = argparse.ArgumentParser(
+           description=__doc__,
+           formatter_class=argparse.RawDescriptionHelpFormatter
+       )
+       parser.add_argument('--input', '-i', required=True, help='Input file path (SMILES, SDF, or PDB)')
+       parser.add_argument('--output', '-o', help='Output file path')
+       parser.add_argument('--config', '-c', help='Config file (JSON)')
+       # Add use-case specific arguments
+
+       args = parser.parse_args()
+
+       # Load config if provided
+       config = None
+       if args.config:
+           with open(args.config) as f:
+               config = json.load(f)
+
+       # Run
+       result = run_<use_case_name>(
+           input_file=args.input,
+           output_file=args.output,
+           config=config
+       )
+
+       print(f"Success: {result.get('output_file', 'Completed')}")
+       return result
+
+   if __name__ == '__main__':
+       main()
+   ```
+
+2. **Extraction Guidelines**
+
+   **For Simple Functions (inline them):**
+   ```python
+   # Original repo code:
+   # repo/utils/parsers.py
+   def parse_cyclic_peptide(smiles):
+       mol = Chem.MolFromSmiles(smiles)
+       if mol is None:
+           raise ValueError(f"Invalid SMILES: {smiles}")
+       return mol
+
+   # Inlined in script (no repo dependency):
+   def parse_cyclic_peptide(smiles: str) -> Chem.Mol:
+       """Parse cyclic peptide SMILES. Inlined from repo/utils/parsers.py"""
+       mol = Chem.MolFromSmiles(smiles)
+       if mol is None:
+           raise ValueError(f"Invalid SMILES: {smiles}")
+       return mol
+   ```
+
+   **For Complex Functions (minimal wrapper):**
+   ```python
+   # If repo function is complex but essential, create minimal wrapper
+   import sys
+   from pathlib import Path
+
+   # Add repo to path only when needed
+   REPO_PATH = Path(__file__).parent.parent / "repo"
+
+   def get_repo_model():
+       """Lazy load repo model to minimize startup time."""
+       sys.path.insert(0, str(REPO_PATH))
+       from library.model import CyclicPeptideModel
+       return CyclicPeptideModel()
+   ```
+
+   **For Model/Data Files (use relative paths):**
+   ```python
+   # Configuration for model paths
+   SCRIPT_DIR = Path(__file__).parent
+   MCP_ROOT = SCRIPT_DIR.parent
+
+   PATHS = {
+       "model": MCP_ROOT / "models" / "pretrained.pt",
+       "config": MCP_ROOT / "configs" / "model_config.json",
+       "data": MCP_ROOT / "examples" / "data"
+   }
+   ```
+
+### Task 3: Create Configuration Files
+
+For each use case that needs configuration:
+
+1. **Create Config Directory**
+   ```
+   configs/
+   ├── predict_structure_config.json
+   ├── calculate_properties_config.json
+   └── default_config.json
+   ```
+
+2. **Config File Format**
+   ```json
+   {
+     "_description": "Configuration for cyclic peptide structure prediction",
+     "_source": "Extracted from examples/<original_script>.py",
+
+     "model": {
+       "path": "models/pretrained.pt",
+       "type": "transformer",
+       "device": "cuda"
+     },
+
+     "processing": {
+       "max_sequence_length": 50,
+       "conformer_count": 10,
+       "energy_minimization": true
+     },
+
+     "output": {
+       "format": "pdb",
+       "include_hydrogens": true,
+       "include_metadata": true
+     }
+   }
+   ```
+
+### Task 4: Verify Scripts Work Independently
+
+1. **Test Each Script**
+   ```bash
+   # Activate environment (prefer mamba over conda)
+   # First check: which mamba && mamba activate ./env || conda activate ./env
+   mamba activate ./env  # or: conda activate ./env
+
+   # Run each script with example data
+   python scripts/predict_structure.py --input examples/data/sample.smi --output results/test_output.pdb
+
+   # Verify output
+   cat results/test_output.pdb
+   ```
+
+2. **Test Without Repo Access** (if possible)
+   ```bash
+   # Temporarily rename repo to test independence
+   mv repo repo_backup
+   python scripts/predict_structure.py --input examples/data/sample.smi --output results/test.pdb
+   mv repo_backup repo
+   ```
+
+3. **Document Any Remaining Repo Dependencies**
+   - If a script still needs repo, document exactly what and why
+   - Consider if that code can be copied to `scripts/lib/`
+
+### Task 5: Create Shared Library (if needed)
+
+If multiple scripts share common functions:
+
+```
+scripts/
+├── lib/
+│   ├── __init__.py
+│   ├── io.py           # Shared I/O functions
+│   ├── molecules.py    # Molecular manipulation utilities
+│   ├── validation.py   # Input validation
+│   └── utils.py        # General utilities
+├── predict_structure.py
+├── calculate_properties.py
+└── enumerate_sequences.py
+```
+
+```python
+# scripts/lib/molecules.py
+"""Shared molecular manipulation functions for cyclic peptide MCP scripts.
+
+These are extracted and simplified from repo code to minimize dependencies.
+"""
+from pathlib import Path
+from typing import Union, Optional, List
+from rdkit import Chem
+from rdkit.Chem import AllChem
+
+def parse_smiles(smiles: str) -> Optional[Chem.Mol]:
+    """Parse SMILES string to RDKit molecule."""
+    mol = Chem.MolFromSmiles(smiles)
+    return mol
+
+def generate_3d_conformer(mol: Chem.Mol, num_conformers: int = 1) -> Chem.Mol:
+    """Generate 3D conformer(s) for a molecule."""
+    mol = Chem.AddHs(mol)
+    AllChem.EmbedMultipleConfs(mol, numConfs=num_conformers)
+    AllChem.MMFFOptimizeMoleculeConfs(mol)
+    return mol
+
+def is_cyclic_peptide(mol: Chem.Mol) -> bool:
+    """Check if molecule is a cyclic peptide."""
+    ring_info = mol.GetRingInfo()
+    return ring_info.NumRings() > 0
+
+def save_molecule(mol: Chem.Mol, file_path: Union[str, Path], format: str = "pdb") -> None:
+    """Save molecule to file in specified format."""
+    file_path = Path(file_path)
+    if format.lower() == "pdb":
+        Chem.MolToPDBFile(mol, str(file_path))
+    elif format.lower() == "sdf":
+        writer = Chem.SDWriter(str(file_path))
+        writer.write(mol)
+        writer.close()
+    elif format.lower() == "smi":
+        with open(file_path, 'w') as f:
+            f.write(Chem.MolToSmiles(mol))
+
+# Add other shared functions...
+```
+
+## Expected Outputs
+
+### 1. Clean Scripts: `scripts/` Directory
+```
+scripts/
+├── lib/                           # Shared utilities (if needed)
+│   ├── __init__.py
+│   ├── io.py
+│   ├── molecules.py
+│   └── validation.py
+├── predict_structure.py           # Clean, self-contained script
+├── calculate_properties.py
+├── enumerate_sequences.py
+└── README.md                      # Script documentation
+```
+
+### 2. Configuration Files: `configs/` Directory
+```
+configs/
+├── predict_structure_config.json
+├── calculate_properties_config.json
+└── README.md                      # Config documentation
+```
+
+### 3. Script Documentation: `reports/step5_scripts.md`
+```markdown
+# Step 5: Scripts Extraction Report
+
+## Extraction Information
+- **Extraction Date**: YYYY-MM-DD
+- **Total Scripts**: 5
+- **Fully Independent**: 3
+- **Repo Dependent**: 2
+- **Inlined Functions**: 15
+- **Config Files Created**: 5
+
+## Scripts Overview
+
+| Script | Description | Independent | Config |
+|--------|-------------|-------------|--------|
+| `predict_structure.py` | Predict cyclic peptide 3D structure | Yes | `configs/predict_structure.json` |
+| `calculate_properties.py` | Calculate molecular properties | No (model) | `configs/calculate_properties.json` |
+
+---
+
+## Script Details
+
+### predict_structure.py
+- **Path**: `scripts/predict_structure.py`
+- **Source**: `examples/use_case_1_predict_structure.py`
+- **Description**: Predict 3D structure of cyclic peptide from SMILES
+- **Main Function**: `run_predict_structure(input_file, output_file=None, config=None, **kwargs)`
+- **Config File**: `configs/predict_structure_config.json`
+- **Tested**: Yes
+- **Independent of Repo**: Yes
+
+**Dependencies:**
+| Type | Packages/Functions |
+|------|-------------------|
+| Essential | numpy, rdkit |
+| Inlined | `repo.utils.parsers.parse_smiles` |
+| Repo Required | None |
+
+**Inputs:**
+| Name | Type | Format | Description |
+|------|------|--------|-------------|
+| input_file | file | smi/sdf | Input molecular file |
+
+**Outputs:**
+| Name | Type | Format | Description |
+|------|------|--------|-------------|
+| result | dict | - | Prediction results |
+| output_file | file | pdb | 3D structure file |
+
+**CLI Usage:**
+```bash
+python scripts/predict_structure.py --input FILE --output FILE
+```
+
+**Example:**
+```bash
+python scripts/predict_structure.py --input examples/data/sample.smi --output results/pred.pdb
+```
+
+---
+
+### calculate_properties.py
+...
+
+---
+
+## Shared Library
+
+**Path**: `scripts/lib/`
+
+| Module | Functions | Description |
+|--------|-----------|-------------|
+| `io.py` | 5 | File I/O utilities |
+| `molecules.py` | 8 | Molecular manipulation |
+| `validation.py` | 4 | Input validation |
+
+**Total Functions**: 17
+```
+
+### 4. Updated README.md in scripts/
+```markdown
+# MCP Scripts
+
+Clean, self-contained scripts extracted from use cases for MCP tool wrapping.
+
+## Design Principles
+
+1. **Minimal Dependencies**: Only essential packages imported (rdkit, numpy, pandas)
+2. **Self-Contained**: Functions inlined where possible
+3. **Configurable**: Parameters in config files, not hardcoded
+4. **MCP-Ready**: Each script has a main function ready for MCP wrapping
+
+## Scripts
+
+| Script | Description | Repo Dependent | Config |
+|--------|-------------|----------------|--------|
+| `predict_structure.py` | Predict 3D structure | No | `configs/predict_structure.json` |
+| `calculate_properties.py` | Calculate properties | Yes (model) | `configs/calculate_properties.json` |
+
+## Usage
+
+```bash
+# Activate environment (prefer mamba over conda)
+mamba activate ./env  # or: conda activate ./env
+
+# Run a script
+python scripts/predict_structure.py --input examples/data/sample.smi --output results/output.pdb
+
+# With custom config
+python scripts/predict_structure.py --input FILE --output FILE --config configs/custom.json
+```
+
+## Shared Library
+
+Common functions are in `scripts/lib/`:
+- `io.py`: File loading/saving
+- `molecules.py`: RDKit molecular utilities
+- `validation.py`: Input validation
+
+## For MCP Wrapping (Step 6)
+
+Each script exports a main function that can be wrapped:
+```python
+from scripts.predict_structure import run_predict_structure
+
+# In MCP tool:
+@mcp.tool()
+def predict_cyclic_peptide_structure(input_file: str, output_file: str = None):
+    return run_predict_structure(input_file, output_file)
+```
+```
+
+## Success Criteria
+
+- [ ] All verified use cases have corresponding scripts in `scripts/`
+- [ ] Each script has a clearly defined main function (e.g., `run_<name>()`)
+- [ ] Dependencies are minimized - only essential imports (rdkit, numpy, pandas, torch)
+- [ ] Repo-specific code is inlined or isolated with lazy loading
+- [ ] Configuration is externalized to `configs/` directory
+- [ ] Scripts work with example data: `python scripts/X.py --input examples/data/Y`
+- [ ] `reports/step5_scripts.md` documents all scripts with dependencies
+- [ ] Scripts are tested and produce correct outputs
+- [ ] README.md in `scripts/` explains usage
+
+## Dependency Checklist
+
+For each script, verify:
+- [ ] No unnecessary imports
+- [ ] Simple utility functions are inlined
+- [ ] Complex repo functions use lazy loading
+- [ ] Paths are relative, not absolute
+- [ ] Config values are externalized
+- [ ] No hardcoded credentials or API keys
+- [ ] RDKit operations handle errors gracefully
+
+## Important Notes
+
+- **Goal is MCP-ready scripts**: These will be wrapped in Step 6
+- **Prefer inlining over importing**: If a function is <20 lines, inline it
+- **Use lazy loading for heavy imports**: `torch`, repo models, etc.
+- **Test independence**: Try running without repo access when possible
+- **Document what can't be simplified**: Some repo code may be essential
+- **RDKit is essential**: Most cyclic peptide operations need RDKit

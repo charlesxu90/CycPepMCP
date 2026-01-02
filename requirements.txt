@@ -1,0 +1,25 @@
+# CycPepMCP Requirements
+# =====================
+
+# Core dependencies
+click>=8.0.0
+pyyaml>=6.0
+requests>=2.28.0
+
+# MCP Server dependencies (for tool-mcps)
+fastmcp>=2.0.0
+loguru>=0.7.0
+
+# Scientific computing (optional, for tool development)
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Chemistry (optional, for NNAA and structure tools)
+# rdkit>=2023.0.0  # Install via conda: conda install -c conda-forge rdkit
+# biopython>=1.80
+
+# Development dependencies
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+ruff>=0.1.0
