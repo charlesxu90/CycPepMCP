@@ -1,503 +1,277 @@
+# CycPepMCP - Cyclic Peptide MCP Server Configuration
+# Each MCP can be set up by running: cd <path> && bash quick_setup.sh
+# The quick_setup.sh script supports: --help, --skip-env, --skip-repo options
+
 mcps:
   CPMP_mcp:
-    dependencies: []
-    description: '> Cyclic Peptide Membrane Permeability prediction toolkit - MCP
-      tools for cyclic peptide computation...'
-    env_vars: {}
+    description: "Cyclic Peptide Membrane Permeability prediction using MAT deep learning"
     path: tool-mcps/cpmp_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.10"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.10 -y)
-      || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.10 -y)
-      || (echo "Warning: Neither mamba nor conda found, creating venv instead" &&
-      python3 -m venv ./env)'
-    - (command -v mamba >/dev/null 2>&1 && mamba install -p ./env -c conda-forge pandas=2.2.3
-      scikit-learn=1.6.1 matplotlib seaborn rdkit=2024.3.2 -y) || ./env/bin/pip install
-      pandas==2.2.3 scikit-learn==1.6.1 matplotlib seaborn
-    - (command -v mamba >/dev/null 2>&1 && mamba install -p ./env -c pytorch -c nvidia
-      pytorch=2.5.1 pytorch-cuda=12.4 -y) || ./env/bin/pip install torch==2.5.1 torchvision
-      torchaudio --index-url https://download.pytorch.org/whl/cu124
-    - ./env/bin/pip install numpy scipy
-    - ./env/bin/pip install fastmcp loguru
-    - ./env/bin/pip install --ignore-installed fastmcp
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/panda1103/CPMP
-  CYC_BUILDER_v1.0_mcp:
-    dependencies: []
-    description: '> Comprehensive MCP tools for cyclic peptide computational analysis
-      and design using the CYC_BUILDER...'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  CYC_BUILDER_v1.0_mcp:
+    description: "Structure-based cyclic peptide design with MCTS and fragment assembly"
     path: tool-mcps/cyc_builder_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.11"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.11 -y)
-      || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.11 -y)
-      || (echo "Warning: Neither mamba nor conda found, creating venv instead" &&
-      python3 -m venv ./env)'
-    - ./env/bin/pip install loguru click pandas numpy tqdm biopython requests pyyaml
-      omegaconf joblib scikit-learn scipy
-    - ./env/bin/pip install --ignore-installed fastmcp
-    - (command -v mamba >/dev/null 2>&1 && ./env/bin/mamba install -c conda-forge
-      rdkit -y) || (command -v conda >/dev/null 2>&1 && ./env/bin/conda install -c
-      conda-forge rdkit -y) || ./env/bin/pip install rdkit
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/wfh1998/CYC_BUILDER_v1.0
-  ColabDesign_mcp:
-    dependencies: []
-    description: '> MCP tools for cyclic peptide computational analysis and design
-      using AlphaFold'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  ColabDesign_mcp:
+    description: "Protein design using AlphaFold, TrDesign, ProteinMPNN, and RFdiffusion"
     path: tool-mcps/afcycdesign_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.10"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.10 pip
-      -y) || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.10
-      pip -y) || (echo "Warning: Neither mamba nor conda found, creating venv instead"
-      && python3 -m venv ./env)'
-    - ./env/bin/pip install "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-    - ./env/bin/pip install git+https://github.com/sokrypton/ColabDesign.git@v1.1.1
-    - (command -v mamba >/dev/null 2>&1 && mamba install -p ./env -c conda-forge rdkit
-      -y) || (command -v conda >/dev/null 2>&1 && conda install -p ./env -c conda-forge
-      rdkit -y) || ./env/bin/pip install rdkit
-    - ./env/bin/pip install --force-reinstall --no-cache-dir loguru click tqdm
-    - ./env/bin/pip install --ignore-installed fastmcp
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/sokrypton/ColabDesign
-  CyclicPeptide_mcp:
-    dependencies: []
-    description: '> MCP tools for cyclic peptide computational analysis using CyclicChamp
-      backbone sampling algorithms'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  CyclicPeptide_mcp:
+    description: "Heuristic energy-based cyclic peptide design (CyclicChamp)"
     path: tool-mcps/cyclicchamp_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.12"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.12 pip
-      -y) || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.12
-      pip -y) || (echo "Warning: Neither mamba nor conda found, creating venv instead"
-      && python3 -m venv ./env)'
-    - ./env/bin/pip install matplotlib numpy scipy loguru click pandas tqdm
-    - ./env/bin/pip install --force-reinstall --no-cache-dir fastmcp
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/qiyaozhu/CyclicPeptide
-  HighFold-MeD_mcp:
-    dependencies: []
-    description: '> MCP tools for cyclic peptide computational analysis using HighFold-MeD
-      (AlphaFold modified for cyc...'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  HighFold-MeD_mcp:
+    description: "Fine-tuned AlphaFold for cyclic peptide structure prediction"
     path: tool-mcps/highfold_med_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.10"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.10 pip
-      -y) || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.10
-      pip -y) || (echo "Warning: Neither mamba nor conda found, creating venv instead"
-      && python3 -m venv ./env)'
-    - ./env/bin/pip install loguru click pandas numpy tqdm
-    - ./env/bin/pip install --force-reinstall --no-cache-dir fastmcp
-    - (command -v mamba >/dev/null 2>&1 && mamba run -p ./env mamba install -c conda-forge
-      rdkit -y) || (command -v conda >/dev/null 2>&1 && conda run -p ./env conda install
-      -c conda-forge rdkit -y) || ./env/bin/pip install rdkit
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/hongliangduan/HighFold-MeD
-  HighFold2_mcp:
-    dependencies: []
-    description: '> Model Context Protocol tools for cyclic peptide computational
-      structure prediction using HighFold2...'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  HighFold2_mcp:
+    description: "Cyclic peptide structure prediction with unnatural amino acids"
     path: tool-mcps/highfold2_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.10"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.10 pip
-      -y) || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.10
-      pip -y) || (echo "Warning: Neither mamba nor conda found, creating venv instead"
-      && python3 -m venv ./env)'
-    - ./env/bin/pip install fastmcp loguru click pandas numpy tqdm
-    - ./env/bin/pip install --ignore-installed fastmcp
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/hongliangduan/HighFold2
-  HighFold3_mcp:
-    dependencies: []
-    description: '> AI-powered structure prediction MCP tools for cyclic peptide computational
-      analysis'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  HighFold3_mcp:
+    description: "AlphaFold3-based structure prediction with CycPOEM and Cyclization Switch"
     path: tool-mcps/highfold3_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.12"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.12 -y)
-      || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.12 -y)
-      || (echo "Warning: Neither mamba nor conda found, creating venv instead" &&
-      python3 -m venv ./env)'
-    - ./env/bin/pip install loguru click pandas numpy tqdm scipy
-    - (command -v mamba >/dev/null 2>&1 && mamba install -c conda-forge rdkit -y -p
-      ./env) || ./env/bin/pip install rdkit
-    - ./env/bin/pip install jax jaxlib absl-py
-    - ./env/bin/pip install --ignore-installed fastmcp
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/hongliangduan/HighFold3
-  HighFold_mcp:
-    dependencies: []
-    description: '> Cyclic Peptide Computational Analysis Tools - MCP server for structure
-      prediction, disulfide bridg...'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  HighFold_mcp:
+    description: "Cyclic peptide structure prediction with head-to-tail and disulfide constraints"
     path: tool-mcps/highfold_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.10"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.10 -y)
-      || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.10 -y)
-      || (echo "Warning: Neither mamba nor conda found, creating venv instead" &&
-      python3 -m venv ./env)'
-    - ./env/bin/pip install fastmcp==2.14.2 loguru==0.7.3 click==8.3.1 pandas==2.3.3
-      numpy==2.2.6 tqdm==4.67.1 mcp==1.25.0 pydantic==2.12.5 uvicorn==0.40.0 rich==14.2.0
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env_py39 python=3.9
-      -y) || (command -v conda >/dev/null 2>&1 && conda create -p ./env_py39 python=3.9
-      -y) || (echo "Warning: Neither mamba nor conda found, creating venv instead"
-      && python3.9 -m venv ./env_py39)'
-    - '(command -v mamba >/dev/null 2>&1 && mamba activate ./env_py39 && mamba install
-      -c conda-forge rdkit==2025.03.5 -y) || (echo "Warning: mamba not found, using
-      pip for rdkit" && ./env_py39/bin/pip install rdkit)'
-    - ./env_py39/bin/pip install biopython==1.85 openmm==8.3.1 numpy==2.0.2 scipy==1.13.1
-      pandas==2.3.1 jax==0.4.30 jaxlib==0.4.30 dm-tree==0.1.8 absl-py==2.3.1 matplotlib==3.9.4
-    - ./env/bin/pip install --ignore-installed fastmcp
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/hongliangduan/HighFold
-  HighPlay_mcp:
-    dependencies: []
-    description: '> MCP tools for cyclic peptide computational analysis using MCTS
-      reinforcement learning'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  HighPlay_mcp:
+    description: "RL-based cyclic peptide sequence design using MCTS"
     path: tool-mcps/highplay_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.10"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.10 pip
-      -y) || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.10
-      pip -y) || (echo "Warning: Neither mamba nor conda found, creating venv instead"
-      && python3 -m venv ./env)'
-    - ./env/bin/pip install loguru click pandas numpy tqdm
-    - ./env/bin/pip install --force-reinstall --no-cache-dir fastmcp
-    - ./env/bin/pip install biopython scipy matplotlib PyYAML requests
-    - (command -v mamba >/dev/null 2>&1 && mamba install -p ./env -c conda-forge rdkit
-      -y) || (command -v conda >/dev/null 2>&1 && conda install -p ./env -c conda-forge
-      rdkit -y) || ./env/bin/pip install rdkit
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/hongliangduan/HighPlay
-  MultiCycPermea_mcp:
-    dependencies: []
-    description: '> MCP tools for cyclic peptide computational analysis - Generate
-      molecular images, predict membrane ...'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  MultiCycPermea_mcp:
+    description: "Multimodal membrane permeability prediction using images and SMILES"
     path: tool-mcps/multicycpermea_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.10"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.10 pip
-      -y) || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.10
-      pip -y) || (echo "Warning: Neither mamba nor conda found, creating venv instead"
-      && python3 -m venv ./env)'
-    - ./env/bin/pip install loguru click pandas numpy tqdm
-    - ./env/bin/pip install --force-reinstall --no-cache-dir fastmcp
-    - (command -v mamba >/dev/null 2>&1 && mamba install -p ./env -c conda-forge rdkit
-      -y) || (command -v conda >/dev/null 2>&1 && conda install -p ./env -c conda-forge
-      rdkit -y) || ./env/bin/pip install rdkit
-    - ./env/bin/pip install cairosvg matplotlib seaborn
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/viko-3/MultiCycPermea
-  Multi_CycGT_mcp:
-    dependencies: []
-    description: '> MCP tools for cyclic peptide computational analysis using Graph
-      Convolutional Networks and Transfo...'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  Multi_CycGT_mcp:
+    description: "GCN+Transformer multimodal model for membrane permeability prediction"
     path: tool-mcps/multicycgt_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.10"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.10 -y)
-      || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.10 -y)
-      || (echo "Warning: Neither mamba nor conda found, creating venv instead" &&
-      python3 -m venv ./env)'
-    - ./env/bin/pip install fastmcp loguru pandas numpy tqdm click
-    - (command -v mamba >/dev/null 2>&1 && mamba install -p ./env pytorch torchvision
-      cpuonly -c pytorch -y) || (command -v conda >/dev/null 2>&1 && conda install
-      -p ./env pytorch torchvision cpuonly -c pytorch -y) || ./env/bin/pip install
-      torch torchvision --index-url https://download.pytorch.org/whl/cpu
-    - (command -v mamba >/dev/null 2>&1 && mamba install -p ./env -c conda-forge rdkit
-      -y) || (command -v conda >/dev/null 2>&1 && conda install -p ./env -c conda-forge
-      rdkit -y) || ./env/bin/pip install rdkit
-    - (command -v mamba >/dev/null 2>&1 && mamba install -p ./env scikit-learn matplotlib
-      seaborn scipy -y) || (command -v conda >/dev/null 2>&1 && conda install -p ./env
-      scikit-learn matplotlib seaborn scipy -y) || ./env/bin/pip install scikit-learn
-      matplotlib seaborn scipy
-    - ./env/bin/pip install --ignore-installed fastmcp
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/hongliangduan/Multi_CycGT
-  PEPFlow_mcp:
-    dependencies: []
-    description: '> MCP tools for optimization algorithm convergence analysis using
-      PEPFlow framework'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  PEPFlow_mcp:
+    description: "Performance Estimation Problem workflow for optimization analysis"
     path: tool-mcps/pepflow_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.10"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.10 -y)
-      || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.10 -y)
-      || (echo "Warning: Neither mamba nor conda found, creating venv instead" &&
-      python3 -m venv ./env)'
-    - cd repo/PEPFlow && ../../env/bin/pip install -e . && cd ../..
-    - ./env/bin/pip install loguru --ignore-installed
-    - ./env/bin/pip install --ignore-installed fastmcp
-    - '(command -v mamba >/dev/null 2>&1 && mamba install -p ./env -c conda-forge
-      osqp clarabel scs -y) || (command -v conda >/dev/null 2>&1 && conda install
-      -p ./env -c conda-forge osqp clarabel scs -y) || (echo "Warning: Neither mamba
-      nor conda found for solver installation, installing via pip" && ./env/bin/pip
-      install osqp clarabel scs)'
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/pepflow-lib/PEPFlow
-  PepFlowww_mcp:
-    dependencies: []
-    description: '> Cyclic peptide computational analysis tools - MCP server for fast
-      peptide property calculation, se...'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  PepFlowww_mcp:
+    description: "Full-atom peptide design using multi-modal flow matching (ICML 2024)"
     path: tool-mcps/pepflowww_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.10"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.10 -y)
-      || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.10 -y)
-      || (echo "Warning: Neither mamba nor conda found, creating venv instead" &&
-      python3 -m venv ./env)'
-    - ./env/bin/python -m pip install --upgrade pip
-    - '(command -v mamba >/dev/null 2>&1 && mamba env update -p ./env -f repo/PepFlowww/environment.yml)
-      || (command -v conda >/dev/null 2>&1 && conda env update -p ./env -f repo/PepFlowww/environment.yml)
-      || echo "Warning: Could not update from environment.yml, installing essential
-      packages manually"'
-    - ./env/bin/pip install numpy pandas matplotlib biopython
-    - ./env/bin/pip install joblib lmdb easydict
-    - ./env/bin/pip install loguru
-    - ./env/bin/pip install --ignore-installed fastmcp
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/Ced3-han/PepFlowww
-  PharmPapp_mcp:
-    dependencies: []
-    description: '> MCP tools for cyclic peptide computational analysis - Permeability
-      prediction and molecular descri...'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  PharmPapp_mcp:
+    description: "Peptide permeability prediction across Caco-2, RRCK, and PAMPA"
     path: tool-mcps/pharmpapp_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.10"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.10 -y)
-      || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.10 -y)
-      || (echo "Warning: Neither mamba nor conda found, creating venv instead" &&
-      python3 -m venv ./env)'
-    - (command -v mamba >/dev/null 2>&1 && mamba run -p ./env pip install pandas numpy
-      scikit-learn matplotlib seaborn tqdm loguru click) || ./env/bin/pip install
-      pandas numpy scikit-learn matplotlib seaborn tqdm loguru click
-    - (command -v mamba >/dev/null 2>&1 && mamba install -p ./env -c conda-forge rdkit
-      -y) || ./env/bin/pip install rdkit
-    - ./env/bin/pip install --force-reinstall --no-cache-dir fastmcp
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/ifyoungnet/PharmPapp
-  boltz_mcp:
-    dependencies: []
-    description: '> MCP tools for cyclic peptide computational analysis using Boltz
-      structure prediction models'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  boltz_mcp:
+    description: "Biomolecular interaction and binding affinity prediction (Boltz-1/2)"
     path: tool-mcps/cyclicboltz1_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.10"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.10 -y)
-      || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.10 -y)
-      || (echo "Warning: Neither mamba nor conda found, creating venv instead" &&
-      python3 -m venv ./env)'
-    - cd repo/boltz && ./env/bin/pip install -e . && cd ../..
-    - ./env/bin/pip install fastmcp loguru --ignore-installed
-    - '(command -v mamba >/dev/null 2>&1 && mamba install -p ./env -c conda-forge
-      rdkit -y) || (command -v conda >/dev/null 2>&1 && conda install -p ./env -c
-      conda-forge rdkit -y) || (echo "Warning: Neither mamba nor conda found, using
-      pip for rdkit" && ./env/bin/pip install rdkit)'
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/jwohlwend/boltz
-  cyclicpeptide_mcp:
-    dependencies: []
-    description: '> Comprehensive MCP tools for cyclic peptide computational analysis
-      and virtual screening'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  cyclicpeptide_mcp:
+    description: "Python package for cyclic peptide drug design and virtual screening"
     path: tool-mcps/cyclicpeptide_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.12"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.12 -y)
-      || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.12 -y)
-      || (echo "Warning: Neither mamba nor conda found, creating venv instead" &&
-      python3 -m venv ./env)'
-    - (command -v mamba >/dev/null 2>&1 && mamba install -c conda-forge rdkit=2025.09.3
-      matplotlib=3.10.8 networkx=3.6.1 pandas=2.3.3 numpy=2.4.0 scipy=1.16.3 loguru=0.7.3
-      click=8.3.1 tqdm=4.67.1 -y -p ./env) || (./env/bin/pip install rdkit matplotlib==3.10.8
-      networkx==3.6.1 pandas==2.3.3 numpy==2.4.0 scipy==1.16.3 loguru==0.7.3 click==8.3.1
-      tqdm==4.67.1)
-    - ./env/bin/pip install --ignore-installed fastmcp==2.14.1 ipython==9.8.0
-    - cp -r repo/cyclicpeptide/cyclicpeptide env/lib/python3.12/site-packages/
-    - cp -r repo/cyclicpeptide/states env/lib/python3.12/site-packages/cyclicpeptide/
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/dfwlab/cyclicpeptide
-  cycpeptmp_mcp:
-    dependencies: []
-    description: '> Cyclic Peptide Computational Tools - MCP server for cyclic peptide
-      analysis, property calculation,...'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  cycpeptmp_mcp:
+    description: "Multi-level feature membrane permeability prediction with data augmentation"
     path: tool-mcps/cycpeptmp_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.10"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.10 pip
-      -y) || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.10
-      pip -y) || (echo "Warning: Neither mamba nor conda found, creating venv instead"
-      && python3 -m venv ./env)'
-    - ./env/bin/pip install fastmcp loguru click pandas numpy tqdm
-    - (command -v mamba >/dev/null 2>&1 && mamba install -p ./env -c conda-forge rdkit
-      matplotlib-base pillow sqlalchemy -y) || (command -v conda >/dev/null 2>&1 &&
-      conda install -p ./env -c conda-forge rdkit matplotlib-base pillow sqlalchemy
-      -y) || ./env/bin/pip install rdkit
-    - ./env/bin/pip install --force-reinstall --no-cache-dir fastmcp
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env_py39 python=3.9
-      pip -y) || (command -v conda >/dev/null 2>&1 && conda create -p ./env_py39 python=3.9
-      pip -y) || (echo "Warning: Creating fallback py39 env with venv" && python3
-      -m venv ./env_py39)'
-    - ./env_py39/bin/pip install numpy==1.25.0 pandas==1.4.4 torch==2.0.0
-    - (command -v mamba >/dev/null 2>&1 && mamba install -p ./env_py39 -c conda-forge
-      rdkit -y) || (command -v conda >/dev/null 2>&1 && conda install -p ./env_py39
-      -c conda-forge rdkit -y) || ./env_py39/bin/pip install rdkit
-    - ./env_py39/bin/pip install mordred
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/akiyamalab/cycpeptmp
-  haddock3_mcp:
-    dependencies: []
-    description: '> MCP tools for HADDOCK3 molecular docking and cyclic peptide computational
-      analysis'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  haddock3_mcp:
+    description: "HADDOCK3 integrative modeling for biomolecular docking"
     path: tool-mcps/haddock3_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.12"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.12 pip
-      -y) || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.12
-      pip -y) || (echo "Warning: Neither mamba nor conda found, creating venv instead"
-      && python3 -m venv ./env)'
-    - ./env/bin/pip install numpy scipy pandas biopython pdb-tools
-    - ./env/bin/pip install loguru click tqdm
-    - ./env/bin/pip install --ignore-installed fastmcp
-    - cd repo/haddock3 && ../../env/bin/pip install -e . && cd ../..
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/haddocking/haddock3
-  helm-gp_mcp:
-    dependencies: []
-    description: '> MCP server for cyclic peptide computational analysis - providing
-      HELM-to-SMILES conversion, permea...'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  helm-gp_mcp:
+    description: "GPT-based de novo macrocyclic peptide design with HELM support"
     path: tool-mcps/helm_gpt_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.10"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.10 pip
-      -y) || (command -v conda >/dev/null 2>&1 && conda create -p ./env python=3.10
-      pip -y) || (echo "Warning: Neither mamba nor conda found, creating venv instead"
-      && python3 -m venv ./env)'
-    - ./env/bin/pip install loguru click pandas numpy tqdm
-    - ./env/bin/pip install --force-reinstall --no-cache-dir fastmcp
-    - ./env/bin/pip install scikit-learn scipy
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/charlesxu90/helm-gpt
-  rf_diffusion_all_atom_mcp:
-    dependencies: []
-    description: '> Cyclic Peptide Computational Analysis Tools - MCP tools for protein-ligand
-      binding analysis and cy...'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  rf_diffusion_all_atom_mcp:
+    description: "RFDiffusion All-Atom for cyclic peptide backbone generation"
     path: tool-mcps/rfpeptides_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.10"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./repo/env python=3.10
-      -y) || (command -v conda >/dev/null 2>&1 && conda create -p ./repo/env python=3.10
-      -y) || (echo "Warning: Neither mamba nor conda found, creating venv instead"
-      && python3 -m venv ./repo/env)'
-    - ./repo/env/bin/pip install fastmcp loguru numpy
-    - ./repo/env/bin/pip install torch hydra-core omegaconf
-    - (command -v mamba >/dev/null 2>&1 && mamba install -p ./repo/env -c conda-forge
-      rdkit -y) || (command -v conda >/dev/null 2>&1 && conda install -p ./repo/env
-      -c conda-forge rdkit -y) || ./repo/env/bin/pip install rdkit
-    - ./repo/env/bin/pip install --ignore-installed fastmcp
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/baker-laboratory/rf_diffusion_all_atom
-  rosetta_mcp:
-    dependencies: []
-    description: '> MCP tools for cyclic peptide computational analysis using Rosetta
-      KIC and GeneralizedKIC protocols'
+    source: Tool
     env_vars: {}
+    dependencies: []
+
+  rosetta_mcp:
+    description: "Rosetta KIC and GeneralizedKIC protocols for cyclic peptide modeling"
     path: tool-mcps/rosetta_kic_mcp
     runtime: python
-    server_args:
-    - src/server.py
+    python_version: "3.12"
     server_command: python
-    setup_commands:
-    - '(command -v mamba >/dev/null 2>&1 && mamba create -p ./env python=3.12 pip
-      numpy pandas -y) || (command -v conda >/dev/null 2>&1 && conda create -p ./env
-      python=3.12 pip numpy pandas -y) || (echo "Warning: Neither mamba nor conda
-      found, creating venv instead" && python3 -m venv ./env && ./env/bin/pip install
-      numpy pandas)'
-    - (command -v mamba >/dev/null 2>&1 && mamba install -p ./env -c conda-forge rdkit
-      -y) || ./env/bin/pip install rdkit
-    - (command -v mamba >/dev/null 2>&1 && mamba install -p ./env -c conda-forge biopython
-      -y) || ./env/bin/pip install biopython
-    - ./env/bin/pip install loguru click tqdm
-    - ./env/bin/pip install --ignore-installed fastmcp
-    source: Tool
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
     url: https://github.com/RosettaCommons/rosetta
+    source: Tool
+    env_vars: {}
+    dependencies: []

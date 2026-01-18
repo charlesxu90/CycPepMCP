@@ -95,7 +95,8 @@ class MCPCreator:
             5: "05_write_scripts",
             6: "06_wrap_mcp",
             7: "07_test_integration",
-            8: "08_create_readme"
+            8: "08_create_readme",
+            9: "09_quick_setup"
         }
 
         pipeline_dir = self.mcp_dir / ".pipeline"
@@ -103,7 +104,7 @@ class MCPCreator:
             return
 
         cleared = []
-        for step_num in range(from_step, 9):
+        for step_num in range(from_step, 10):
             if step_num in step_markers:
                 marker = self._get_marker(step_markers[step_num])
                 if marker.exists():
@@ -416,6 +417,244 @@ class MCPCreator:
         else:
             self.step_status['step8'] = 'failed'
 
+    def step9_generate_quick_setup(self):
+        """Step 9: Generate quick_setup.sh script for easy installation"""
+        marker = self._get_marker("09_quick_setup")
+        output_file = self.mcp_dir / "claude_outputs" / "step9_output.json"
+
+        if check_marker(marker):
+            log_progress(9, "Generate quick_setup.sh script", "skip")
+            self.step_status['step9'] = 'skipped'
+            return
+
+        log_progress(9, "Generate quick_setup.sh script", "start")
+
+        prompt_file = self.prompts_dir / "generate_quick_setup_prompt.md"
+        if not prompt_file.exists():
+            logger.warning(f"  ⚠️ Prompt file not found: {prompt_file}")
+            logger.warning("  Generating default quick_setup.sh instead...")
+            if self._generate_default_quick_setup():
+                create_marker(marker)
+                log_progress(9, "Generate quick_setup.sh script", "complete")
+                self.step_status['step9'] = 'executed'
+            else:
+                self.step_status['step9'] = 'failed'
+            return
+
+        with open(prompt_file, 'r') as f:
+            prompt_content = f.read()
+
+        # Detect Python version from environment
+        python_version = self._detect_python_version()
+
+        prompt_content = prompt_content.replace('${repo_name}', self.repo_name)
+        prompt_content = prompt_content.replace('${mcp_name}', self.repo_name)
+        prompt_content = prompt_content.replace('${python_version}', python_version)
+        prompt_content = prompt_content.replace('${repo_url}', self.github_url or '')
+
+        if run_claude_with_streaming(prompt_content, output_file, self.mcp_dir, self.api_key):
+            # Ensure quick_setup.sh is executable
+            quick_setup_path = self.mcp_dir / "quick_setup.sh"
+            if quick_setup_path.exists():
+                quick_setup_path.chmod(0o755)
+                logger.info(f"\n  📜 quick_setup.sh created: {quick_setup_path}")
+
+            create_marker(marker)
+            log_progress(9, "Generate quick_setup.sh script", "complete")
+            self.step_status['step9'] = 'executed'
+        else:
+            # Fall back to default quick_setup.sh
+            logger.warning("  Claude generation failed, creating default quick_setup.sh...")
+            if self._generate_default_quick_setup():
+                create_marker(marker)
+                log_progress(9, "Generate quick_setup.sh script", "complete")
+                self.step_status['step9'] = 'executed'
+            else:
+                self.step_status['step9'] = 'failed'
+
+    def _detect_python_version(self) -> str:
+        """Detect Python version from existing environment or reports"""
+        # Try to read from step3 environment report
+        env_report = self.mcp_dir / "reports" / "step3_environment.md"
+        if env_report.exists():
+            try:
+                content = env_report.read_text()
+                import re
+                match = re.search(r'python[=<>]*(\d+\.\d+)', content.lower())
+                if match:
+                    return match.group(1)
+            except:
+                pass
+
+        # Check existing environment
+        env_python = self.mcp_dir / "env" / "bin" / "python"
+        if env_python.exists():
+            try:
+                import subprocess
+                result = subprocess.run(
+                    [str(env_python), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode == 0:
+                    return result.stdout.strip()
+            except:
+                pass
+
+        return "3.10"  # Default
+
+    def _generate_default_quick_setup(self) -> bool:
+        """Generate a default quick_setup.sh script"""
+        python_version = self._detect_python_version()
+
+        quick_setup_content = f'''#!/bin/bash
+# quick_setup.sh - Quick setup script for {self.repo_name}
+#
+# Usage:
+#   bash quick_setup.sh [options]
+#
+# Options:
+#   --help      Show this help message
+#   --skip-env  Skip environment creation (use existing env)
+#   --skip-repo Skip repository cloning (repo already present)
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
+MCP_NAME="{self.repo_name}"
+PYTHON_VERSION="{python_version}"
+REPO_URL="{self.github_url or ''}"
+REPO_NAME="{self.repo_name}"
+
+# Colors
+RED='\\033[0;31m'
+GREEN='\\033[0;32m'
+YELLOW='\\033[1;33m'
+BLUE='\\033[0;34m'
+NC='\\033[0m'
+
+log_info() {{ echo -e "${{BLUE}}[INFO]${{NC}} $1"; }}
+log_success() {{ echo -e "${{GREEN}}[SUCCESS]${{NC}} $1"; }}
+log_warning() {{ echo -e "${{YELLOW}}[WARNING]${{NC}} $1"; }}
+log_error() {{ echo -e "${{RED}}[ERROR]${{NC}} $1"; }}
+
+show_help() {{
+    cat << EOF
+$MCP_NAME Quick Setup Script
+
+Usage:
+    bash quick_setup.sh [options]
+
+Options:
+    --help      Show this help message
+    --skip-env  Skip environment creation (use existing env)
+    --skip-repo Skip repository cloning (repo already present)
+
+EOF
+    exit 0
+}}
+
+get_pkg_manager() {{
+    if command -v mamba &> /dev/null; then
+        echo "mamba"
+    elif command -v conda &> /dev/null; then
+        echo "conda"
+    else
+        echo ""
+    fi
+}}
+
+SKIP_ENV=false
+SKIP_REPO=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help|-h) show_help ;;
+        --skip-env) SKIP_ENV=true; shift ;;
+        --skip-repo) SKIP_REPO=true; shift ;;
+        *) log_error "Unknown option: $1"; show_help ;;
+    esac
+done
+
+cd "$SCRIPT_DIR"
+log_info "Setting up $MCP_NAME in: $SCRIPT_DIR"
+
+PKG_MGR=$(get_pkg_manager)
+if [ -z "$PKG_MGR" ]; then
+    log_error "Neither mamba nor conda found. Please install one first."
+    exit 1
+fi
+log_info "Using package manager: $PKG_MGR"
+
+# Clone repository
+if [ "$SKIP_REPO" = false ] && [ -n "$REPO_URL" ]; then
+    if [ -d "repo/$REPO_NAME" ]; then
+        log_info "Repository already exists"
+    else
+        log_info "Cloning repository..."
+        mkdir -p repo
+        git clone --depth=1 "$REPO_URL" "repo/$REPO_NAME" || git clone "$REPO_URL" "repo/$REPO_NAME"
+        log_success "Repository cloned"
+    fi
+fi
+
+# Create environment
+if [ "$SKIP_ENV" = false ]; then
+    if [ -d "env" ]; then
+        log_warning "Environment already exists at ./env"
+    else
+        log_info "Creating environment with Python $PYTHON_VERSION..."
+        $PKG_MGR create -p ./env python=$PYTHON_VERSION -y
+        log_success "Environment created"
+    fi
+fi
+
+if [ ! -f "env/bin/python" ]; then
+    log_error "Environment not found at ./env/bin/python"
+    exit 1
+fi
+
+# Install dependencies
+log_info "Installing dependencies..."
+./env/bin/pip install --upgrade pip
+
+if [ -f "requirements.txt" ]; then
+    ./env/bin/pip install -r requirements.txt
+fi
+
+if [ -f "repo/$REPO_NAME/requirements.txt" ]; then
+    ./env/bin/pip install -r "repo/$REPO_NAME/requirements.txt"
+fi
+
+./env/bin/pip install --ignore-installed fastmcp loguru requests
+
+log_success "Dependencies installed"
+
+# Verify
+log_info "Verifying installation..."
+./env/bin/python -c "import sys; print(f'Python {{sys.version}}')"
+./env/bin/python -c "import fastmcp; print(f'fastmcp {{fastmcp.__version__}}')"
+
+log_success "=============================================="
+log_success "  $MCP_NAME setup completed!"
+log_success "=============================================="
+echo
+echo "Next steps:"
+echo "  1. Register: claude mcp add $MCP_NAME -- \\$(pwd)/env/bin/python \\$(pwd)/src/server.py"
+echo "  2. Or use: cpmcp install $MCP_NAME"
+'''
+
+        try:
+            quick_setup_path = self.mcp_dir / "quick_setup.sh"
+            quick_setup_path.write_text(quick_setup_content)
+            quick_setup_path.chmod(0o755)
+            logger.info(f"  📜 Default quick_setup.sh created: {quick_setup_path}")
+            return True
+        except Exception as e:
+            logger.error(f"  Failed to create quick_setup.sh: {e}")
+            return False
+
     def print_summary(self):
         """Print final pipeline summary"""
         logger.info("\n" + "="*60)
@@ -430,7 +669,8 @@ class MCPCreator:
             'step5': '5. Write scripts for use case functions',
             'step6': '6. Extract MCP tools & wrap in server',
             'step7': '7. Test Claude & Gemini integration',
-            'step8': '8. Create comprehensive README'
+            'step8': '8. Create comprehensive README',
+            'step9': '9. Generate quick_setup.sh script'
         }
 
         for key, desc in step_descriptions.items():
@@ -488,6 +728,9 @@ class MCPCreator:
             self.step8_create_readme()
             logger.info(f"\n📄 README documentation created\n")
 
+            self.step9_generate_quick_setup()
+            logger.info(f"\n📜 quick_setup.sh script generated\n")
+
             self.print_summary()
 
         except Exception as e:
@@ -499,8 +742,10 @@ class MCPCreator:
         """Get information about the created MCP."""
         server_py = self.mcp_dir / "src" / "server.py"
         legacy_tool_py = self.mcp_dir / "src" / f"{self.repo_name}_mcp.py"
+        quick_setup = self.mcp_dir / "quick_setup.sh"
 
         mcp_file = server_py if server_py.exists() else legacy_tool_py
+        python_version = self._detect_python_version()
 
         return {
             'name': self.repo_name,
@@ -508,6 +753,9 @@ class MCPCreator:
             'repo_dir': str(self.mcp_dir / "repo" / self.repo_name),
             'server_file': str(mcp_file) if mcp_file.exists() else None,
             'readme': str(self.mcp_dir / "README.md"),
+            'quick_setup': str(quick_setup) if quick_setup.exists() else None,
+            'setup_script': 'quick_setup.sh' if quick_setup.exists() else None,
+            'python_version': python_version,
             'source_url': self.github_url or str(self.local_repo_path),
             'step_status': self.step_status.copy()
         }

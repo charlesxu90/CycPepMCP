@@ -103,7 +103,9 @@ class MCP:
         description: Brief description
         source: Source organization
         runtime: Runtime type (python, node, uvx, npx, binary)
-        setup_commands: Commands to run after cloning
+        python_version: Required Python version (e.g., "3.10", "3.11")
+        setup_commands: Commands to run after cloning (legacy, prefer setup_script)
+        setup_script: Setup script filename (e.g., "quick_setup.sh")
         server_command: Command to start the server
         server_args: Arguments for the server command
         env_vars: Environment variables needed
@@ -116,7 +118,9 @@ class MCP:
     description: str = ""
     source: str = "Community"
     runtime: str = "python"
+    python_version: str = "3.10"
     setup_commands: List[str] = field(default_factory=list)
+    setup_script: str = ""
     server_command: str = ""
     server_args: List[str] = field(default_factory=list)
     env_vars: Dict[str, str] = field(default_factory=dict)
@@ -256,12 +260,14 @@ class MCP:
     # Installation Methods
     # -------------------------------------------------------------------------
 
-    def install(self, force: bool = False) -> bool:
+    def install(self, force: bool = False, skip_env: bool = False, skip_repo: bool = False) -> bool:
         """
         Install MCP to local machine.
 
         Args:
             force: If True, re-install even if already installed
+            skip_env: If True, skip environment creation (passed to quick_setup.sh)
+            skip_repo: If True, skip repository cloning (passed to quick_setup.sh)
 
         Returns:
             True if successful, False otherwise
@@ -289,11 +295,8 @@ class MCP:
                 print(f"Found local MCP '{self.name}' at: {local_path}")
                 self.invalidate_status_cache()
 
-                # Run setup commands
-                if self.setup_commands:
-                    return self._run_setup_commands()
-
-                return True
+                # Run setup: prefer quick_setup.sh, fall back to setup_commands
+                return self._run_setup(skip_env=skip_env, skip_repo=skip_repo)
 
             # If local path doesn't exist but URL is provided, fall through to clone
             elif self.url:
@@ -350,11 +353,8 @@ class MCP:
 
             self.invalidate_status_cache()
 
-            # Run setup commands
-            if self.setup_commands:
-                return self._run_setup_commands()
-
-            return True
+            # Run setup: prefer quick_setup.sh, fall back to setup_commands
+            return self._run_setup(skip_env=skip_env, skip_repo=True)  # skip_repo since we just cloned
 
         except FileNotFoundError:
             print("Git not found. Please install git first.")
@@ -364,6 +364,88 @@ class MCP:
             return False
         except Exception as e:
             print(f"Clone failed: {e}")
+            return False
+
+    def _run_setup(self, skip_env: bool = False, skip_repo: bool = False) -> bool:
+        """
+        Run setup for the MCP. Prefers quick_setup.sh if available, falls back to setup_commands.
+
+        Args:
+            skip_env: If True, pass --skip-env to quick_setup.sh
+            skip_repo: If True, pass --skip-repo to quick_setup.sh
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.path:
+            return False
+
+        # Try quick_setup.sh first if setup_script is defined
+        if self.setup_script:
+            success = self._run_setup_script(skip_env=skip_env, skip_repo=skip_repo)
+            if success:
+                return True
+            print(f"   quick_setup.sh failed, trying setup_commands...")
+
+        # Fall back to setup_commands
+        if self.setup_commands:
+            return self._run_setup_commands()
+
+        return True
+
+    def _run_setup_script(self, skip_env: bool = False, skip_repo: bool = False) -> bool:
+        """
+        Run the quick_setup.sh script if it exists.
+
+        Args:
+            skip_env: If True, pass --skip-env flag
+            skip_repo: If True, pass --skip-repo flag
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.path or not self.setup_script:
+            return False
+
+        cwd = resolve_path(self.path)
+        setup_script_path = cwd / self.setup_script
+
+        if not setup_script_path.exists():
+            print(f"   Setup script not found: {setup_script_path}")
+            return False
+
+        # Build command with optional flags
+        cmd = ["bash", str(setup_script_path)]
+        if skip_env:
+            cmd.append("--skip-env")
+        if skip_repo:
+            cmd.append("--skip-repo")
+
+        print(f"Running setup script for {self.name}...")
+        print(f"   Script: {setup_script_path}")
+        print(f"   Command: {' '.join(cmd)}")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=str(cwd),
+                capture_output=False,  # Show output in real-time
+                text=True,
+                timeout=1800  # 30 minutes timeout for setup
+            )
+
+            if result.returncode != 0:
+                print(f"   Setup script failed with return code: {result.returncode}")
+                return False
+
+            print(f"   Setup script completed successfully")
+            return True
+
+        except subprocess.TimeoutExpired:
+            print(f"   Setup script timed out (exceeded 30 minutes)")
+            return False
+        except Exception as e:
+            print(f"   Setup script error: {e}")
             return False
 
     def uninstall(self, remove_files: bool = True) -> bool:

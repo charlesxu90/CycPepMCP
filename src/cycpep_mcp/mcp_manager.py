@@ -294,14 +294,26 @@ class MCPManager:
     # High-level Operations
     # -------------------------------------------------------------------------
 
-    def install_mcp(self, name: str, force: bool = False) -> bool:
-        """Install an MCP by name."""
+    def install_mcp(self, name: str, force: bool = False,
+                    skip_env: bool = False, skip_repo: bool = False) -> bool:
+        """
+        Install an MCP by name.
+
+        Args:
+            name: Name of the MCP to install
+            force: If True, re-install even if already installed
+            skip_env: If True, skip environment creation (passed to quick_setup.sh)
+            skip_repo: If True, skip repository cloning (passed to quick_setup.sh)
+
+        Returns:
+            True if successful, False otherwise
+        """
         mcp = self.get_mcp(name)
         if not mcp:
             print(f"MCP '{name}' not found")
             return False
 
-        success = mcp.install(force=force)
+        success = mcp.install(force=force, skip_env=skip_env, skip_repo=skip_repo)
 
         if success:
             self.add_installed_mcp(mcp)
@@ -350,10 +362,25 @@ class MCPManager:
         name: str,
         cli: str = "claude",
         scope: MCPScope = MCPScope.GLOBAL,
-        force: bool = False
+        force: bool = False,
+        skip_env: bool = False,
+        skip_repo: bool = False
     ) -> bool:
-        """Install and register an MCP in one operation."""
-        if not self.install_mcp(name, force=force):
+        """
+        Install and register an MCP in one operation.
+
+        Args:
+            name: Name of the MCP to install
+            cli: CLI tool to register with ("claude" or "gemini")
+            scope: Registration scope (project or global)
+            force: If True, re-install even if already installed
+            skip_env: If True, skip environment creation (passed to quick_setup.sh)
+            skip_repo: If True, skip repository cloning (passed to quick_setup.sh)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.install_mcp(name, force=force, skip_env=skip_env, skip_repo=skip_repo):
             return False
 
         return self.register_mcp(name, cli=cli, scope=scope)
@@ -393,11 +420,18 @@ class MCPManager:
         name = mcp_dir.name
         description = "Tool MCP from local repository"
         runtime = "python"
+        python_version = "3.10"
         server_command = "python"
         server_args = []
+        setup_script = ""
         setup_commands = []
         env_vars = {}
         dependencies = []
+
+        # Check for quick_setup.sh first (preferred setup method)
+        quick_setup = mcp_dir / "quick_setup.sh"
+        if quick_setup.exists():
+            setup_script = "quick_setup.sh"
 
         # Extract description from README
         readme = mcp_dir / "README.md"
@@ -414,6 +448,22 @@ class MCPManager:
                     if len(line) > 10:
                         description = line[:100] + "..." if len(line) > 100 else line
                         break
+            except:
+                pass
+
+        # Detect Python version from environment
+        env_python = mcp_dir / "env" / "bin" / "python"
+        if env_python.exists():
+            try:
+                import subprocess
+                result = subprocess.run(
+                    [str(env_python), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode == 0:
+                    python_version = result.stdout.strip()
             except:
                 pass
 
@@ -445,13 +495,14 @@ class MCPManager:
         except ValueError:
             server_args = [str(entry_point)]
 
-        # Detect setup commands
-        if (mcp_dir / "setup.py").exists() or (mcp_dir / "pyproject.toml").exists():
-            setup_commands.append("pip install -e .")
-        elif (mcp_dir / "requirements.txt").exists():
-            setup_commands.append("pip install -r requirements.txt")
-        else:
-            setup_commands.append("pip install fastmcp requests")
+        # Only detect setup commands if no setup_script (legacy fallback)
+        if not setup_script:
+            if (mcp_dir / "setup.py").exists() or (mcp_dir / "pyproject.toml").exists():
+                setup_commands.append("pip install -e .")
+            elif (mcp_dir / "requirements.txt").exists():
+                setup_commands.append("pip install -r requirements.txt")
+            else:
+                setup_commands.append("pip install fastmcp requests")
 
         # Check for Node.js MCPs
         if (mcp_dir / "package.json").exists():
@@ -466,17 +517,20 @@ class MCPManager:
             else:
                 return None
 
-            setup_commands = ["npm install"]
-            if (mcp_dir / "tsconfig.json").exists():
-                setup_commands.append("npm run build")
+            if not setup_script:
+                setup_commands = ["npm install"]
+                if (mcp_dir / "tsconfig.json").exists():
+                    setup_commands.append("npm run build")
 
         return {
             "name": name,
             "description": description,
             "source": "Tool",
             "runtime": runtime,
+            "python_version": python_version,
             "server_command": server_command,
             "server_args": server_args,
+            "setup_script": setup_script,
             "setup_commands": setup_commands,
             "env_vars": env_vars,
             "dependencies": dependencies,

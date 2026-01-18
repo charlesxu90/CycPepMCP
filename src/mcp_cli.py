@@ -95,12 +95,20 @@ def status_command(refresh: bool):
               help='CLI tool to register with (default: claude)')
 @click.option('--no-register', is_flag=True,
               help='Install only, do not register with CLI')
-def install_command(mcp_names: tuple, cli: str, no_register: bool):
+@click.option('--skip-env', is_flag=True,
+              help='Skip environment creation (use existing env)')
+@click.option('--skip-repo', is_flag=True,
+              help='Skip repository cloning (repo already present)')
+def install_command(mcp_names: tuple, cli: str, no_register: bool, skip_env: bool, skip_repo: bool):
     """
     Install one or more MCP servers and optionally register them with a CLI.
 
     By default, installs the MCPs and registers them with Claude Code.
     Use --no-register to skip CLI registration.
+
+    The --skip-env and --skip-repo options are passed to quick_setup.sh:
+    - --skip-env: Skip environment creation if env/ already exists
+    - --skip-repo: Skip repository cloning if repo/ already exists
 
     Examples:
 
@@ -115,13 +123,20 @@ def install_command(mcp_names: tuple, cli: str, no_register: bool):
 
       # Install only, don't register:
       cpmcp install head_to_tail_mcp --no-register
+
+      # Install with existing environment:
+      cpmcp install cycpep_mcp --skip-env
+
+      # Install with both existing env and repo:
+      cpmcp install cycpep_mcp --skip-env --skip-repo
     """
     failed = []
     for mcp_name in mcp_names:
         click.echo(f"\n{'='*60}")
         click.echo(f"Installing: {mcp_name}")
         click.echo('='*60)
-        if not install_mcp_cmd(mcp_name, cli=cli, no_register=no_register):
+        if not install_mcp_cmd(mcp_name, cli=cli, no_register=no_register,
+                               skip_env=skip_env, skip_repo=skip_repo):
             failed.append(mcp_name)
 
     if failed:

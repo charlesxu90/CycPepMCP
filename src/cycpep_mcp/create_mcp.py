@@ -102,6 +102,8 @@ def register_created_mcp(mcp_info: dict, github_url: str = "", local_repo_path: 
         mcp_dir = mcp_info.get('mcp_dir', '')
         server_file = mcp_info.get('server_file')
         source_url = mcp_info.get('source_url', github_url or local_repo_path)
+        setup_script = mcp_info.get('setup_script', '')
+        python_version = mcp_info.get('python_version', '3.10')
 
         if not mcp_name or not mcp_dir:
             logger.error("❌ Missing MCP name or directory in mcp_info")
@@ -138,12 +140,20 @@ def register_created_mcp(mcp_info: dict, github_url: str = "", local_repo_path: 
             except ValueError:
                 server_args = [server_file]
 
-        script_dir = Path(__file__).parent
-        prompts_dir = script_dir.parent / "prompts"
-        mcp_path = Path(mcp_dir)
+        # Check if quick_setup.sh was generated
+        quick_setup_path = Path(mcp_dir) / "quick_setup.sh"
+        if quick_setup_path.exists() and not setup_script:
+            setup_script = "quick_setup.sh"
+            logger.info("  📜 Found quick_setup.sh, will use it for installation")
 
-        logger.info("📋 Extracting setup commands from README...")
-        setup_commands = extract_setup_commands_with_claude(mcp_path, prompts_dir)
+        # Only extract setup_commands if no quick_setup.sh exists (legacy fallback)
+        setup_commands = []
+        if not setup_script:
+            script_dir = Path(__file__).parent
+            prompts_dir = script_dir.parent / "prompts"
+            mcp_path_obj = Path(mcp_dir)
+            logger.info("📋 Extracting setup commands from README (no quick_setup.sh found)...")
+            setup_commands = extract_setup_commands_with_claude(mcp_path_obj, prompts_dir)
 
         mcp = MCP(
             name=registry_name,
@@ -151,9 +161,11 @@ def register_created_mcp(mcp_info: dict, github_url: str = "", local_repo_path: 
             description=description,
             source="Tool",
             runtime="python",
+            python_version=python_version,
             server_command="python",
             server_args=server_args,
             path=mcp_dir,
+            setup_script=setup_script,
             setup_commands=setup_commands,
             env_vars={},
             dependencies=[]

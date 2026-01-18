@@ -146,7 +146,8 @@ def show_status(refresh_cache: bool = False) -> None:
     print()
 
 
-def install_mcp_cmd(mcp_name: str, cli: str = "claude", no_register: bool = False) -> bool:
+def install_mcp_cmd(mcp_name: str, cli: str = "claude", no_register: bool = False,
+                    skip_env: bool = False, skip_repo: bool = False) -> bool:
     """
     Install an MCP and optionally register it with the specified CLI.
 
@@ -154,6 +155,8 @@ def install_mcp_cmd(mcp_name: str, cli: str = "claude", no_register: bool = Fals
         mcp_name: Name of the MCP to install
         cli: CLI tool to register with ("claude" or "gemini")
         no_register: If True, only install without registering
+        skip_env: If True, skip environment creation (passed to quick_setup.sh)
+        skip_repo: If True, skip repository cloning (passed to quick_setup.sh)
 
     Returns:
         True if successful, False otherwise
@@ -172,7 +175,13 @@ def install_mcp_cmd(mcp_name: str, cli: str = "claude", no_register: bool = Fals
 
     if status in [MCPStatus.NOT_INSTALLED, MCPStatus.REGISTERED]:
         print(f"\nInstalling '{mcp_name}'...")
-        if not mcp_manager.install_mcp(mcp_name):
+        if mcp.setup_script:
+            print(f"  Using setup script: {mcp.setup_script}")
+            if skip_env:
+                print(f"  --skip-env: Will skip environment creation")
+            if skip_repo:
+                print(f"  --skip-repo: Will skip repository cloning")
+        if not mcp_manager.install_mcp(mcp_name, skip_env=skip_env, skip_repo=skip_repo):
             return False
     else:
         print(f"MCP '{mcp_name}' already installed")
@@ -220,6 +229,7 @@ def show_info(mcp_name: str) -> None:
     print(f"  Description: {mcp.description}")
     print(f"  Source: {mcp.source}")
     print(f"  Runtime: {mcp.runtime}")
+    print(f"  Python Version: {mcp.python_version}")
 
     if mcp.url:
         print(f"  URL: {mcp.url}")
@@ -237,6 +247,9 @@ def show_info(mcp_name: str) -> None:
     if mcp.server_args:
         print(f"  Server Args: {' '.join(mcp.server_args)}")
 
+    if mcp.setup_script:
+        print(f"  Setup Script: {mcp.setup_script}")
+
     if mcp.env_vars:
         print(f"  Environment Variables:")
         for key, value in mcp.env_vars.items():
@@ -246,7 +259,7 @@ def show_info(mcp_name: str) -> None:
         print(f"  Dependencies: {', '.join(mcp.dependencies)}")
 
     if mcp.setup_commands:
-        print(f"  Setup Commands:")
+        print(f"  Setup Commands (legacy):")
         for cmd in mcp.setup_commands:
             print(f"    - {cmd}")
 
