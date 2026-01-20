@@ -18,3 +18,19 @@ skills:
     - cycpep_design_mcp
     - peptide_permeability_mcp
     - nnaa_mcp
+
+  mcl1_cycpep_design:
+    description: De novo cyclic peptide binder design workflow for MCL1
+    file_path: workflow-skills/cycpep_design_steps.md
+    required_mcps:
+    - rf_diffusion_all_atom_mcp
+    - CYC_BUILDER_v1.0_mcp
+    - ligandmpnn_mcp
+    - HighPlay_mcp
+    - boltz_mcp
+    - HighFold3_mcp
+    - haddock3_mcp
+    - CPMP_mcp
+    - MultiCycPermea_mcp
+    - gromacs_mcp
+    - amber_mcp

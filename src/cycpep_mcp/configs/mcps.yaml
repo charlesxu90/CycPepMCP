@@ -275,3 +275,55 @@ mcps:
     source: Tool
     env_vars: {}
     dependencies: []
+
+  ligandmpnn_mcp:
+    description: "LigandMPNN for structure-aware sequence design"
+    path: tool-mcps/ligandmpnn_mcp
+    runtime: python
+    python_version: "3.11"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/Biomolecular-Design-Nexus/ligandmpnn_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  alphafold3_mcp:
+    description: "AlphaFold3 for biomolecular structure prediction"
+    path: tool-mcps/alphafold3_mcp
+    runtime: python
+    python_version: "3.11"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/Biomolecular-Design-Nexus/alphafold3_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  gromacs_mcp:
+    description: "GROMACS molecular dynamics simulations"
+    path: tool-mcps/gromacs_mcp
+    runtime: python
+    python_version: "3.10"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/Biomolecular-Design-Nexus/gromacs_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  amber_mcp:
+    description: "Amber MD simulations and free energy calculations"
+    path: tool-mcps/amber_mcp
+    runtime: python
+    python_version: "3.12"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/Biomolecular-Design-Nexus/amber_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
