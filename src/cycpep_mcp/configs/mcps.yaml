@@ -3,7 +3,7 @@
 # The quick_setup.sh script supports: --help, --skip-env, --skip-repo options
 
 mcps:
-  CPMP_mcp:
+  cpmp_mcp:
     description: "Cyclic Peptide Membrane Permeability prediction using MAT deep learning"
     path: tool-mcps/cpmp_mcp
     runtime: python
@@ -16,7 +16,7 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  CYC_BUILDER_v1.0_mcp:
+  cyc_builder_mcp:
     description: "Structure-based cyclic peptide design with MCTS and fragment assembly"
     path: tool-mcps/cyc_builder_mcp
     runtime: python
@@ -29,7 +29,7 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  ColabDesign_mcp:
+  afcycdesign_mcp:
     description: "Protein design using AlphaFold, TrDesign, ProteinMPNN, and RFdiffusion"
     path: tool-mcps/afcycdesign_mcp
     runtime: python
@@ -37,7 +37,7 @@ mcps:
     server_command: python
     server_args: [src/server.py]
     setup_script: quick_setup.sh
-    url: https://github.com/sokrypton/ColabDesign
+    url: https://github.com/Biomolecular-Design-Nexus/afcycdesign_mcp
     source: Tool
     env_vars: {}
     dependencies: []
