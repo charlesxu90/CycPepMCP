@@ -21,7 +21,7 @@ import click
 
 from .skill.skill_manager import SkillManager
 from .skill.create_skill import SkillCreator, interactive_add_step
-from .mcp.mcp_manager import MCPManager
+from .cycpep_mcp.mcp_manager import MCPManager
 
 
 def check_required_mcps(required_mcps: List[str], cli: str = "claude") -> Tuple[List[str], List[str]]:

@@ -42,7 +42,7 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  CyclicPeptide_mcp:
+  cyclicchamp_mcp:
     description: "Heuristic energy-based cyclic peptide design (CyclicChamp)"
     path: tool-mcps/cyclicchamp_mcp
     runtime: python
@@ -55,7 +55,7 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  HighFold-MeD_mcp:
+  highfold_med_mcp:
     description: "Fine-tuned AlphaFold for cyclic peptide structure prediction"
     path: tool-mcps/highfold_med_mcp
     runtime: python
@@ -68,20 +68,7 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  HighFold2_mcp:
-    description: "Cyclic peptide structure prediction with unnatural amino acids"
-    path: tool-mcps/highfold2_mcp
-    runtime: python
-    python_version: "3.10"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/hongliangduan/HighFold2
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  HighFold3_mcp:
+  highfold3_mcp:
     description: "AlphaFold3-based structure prediction with CycPOEM and Cyclization Switch"
     path: tool-mcps/highfold3_mcp
     runtime: python
@@ -94,20 +81,7 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  HighFold_mcp:
-    description: "Cyclic peptide structure prediction with head-to-tail and disulfide constraints"
-    path: tool-mcps/highfold_mcp
-    runtime: python
-    python_version: "3.10"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/hongliangduan/HighFold
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  HighPlay_mcp:
+  highplay_mcp:
     description: "RL-based cyclic peptide sequence design using MCTS"
     path: tool-mcps/highplay_mcp
     runtime: python
@@ -120,7 +94,7 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  MultiCycPermea_mcp:
+  multicycpermea_mcp:
     description: "Multimodal membrane permeability prediction using images and SMILES"
     path: tool-mcps/multicycpermea_mcp
     runtime: python
@@ -133,7 +107,7 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  Multi_CycGT_mcp:
+  multicycgt_mcp:
     description: "GCN+Transformer multimodal model for membrane permeability prediction"
     path: tool-mcps/multicycgt_mcp
     runtime: python
@@ -146,7 +120,7 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  PEPFlow_mcp:
+  pepflow_mcp:
     description: "Performance Estimation Problem workflow for optimization analysis"
     path: tool-mcps/pepflow_mcp
     runtime: python
@@ -159,7 +133,7 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  PepFlowww_mcp:
+  pepflowww_mcp:
     description: "Full-atom peptide design using multi-modal flow matching (ICML 2024)"
     path: tool-mcps/pepflowww_mcp
     runtime: python
@@ -172,7 +146,7 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  PharmPapp_mcp:
+  pharmpapp_mcp:
     description: "Peptide permeability prediction across Caco-2, RRCK, and PAMPA"
     path: tool-mcps/pharmpapp_mcp
     runtime: python
@@ -185,7 +159,7 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  boltz_mcp:
+  cyclicboltz_mcp:
     description: "Biomolecular interaction and binding affinity prediction (Boltz-1/2)"
     path: tool-mcps/cyclicboltz1_mcp
     runtime: python
@@ -237,7 +211,7 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  helm-gp_mcp:
+  helmgpt_mcp:
     description: "GPT-based de novo macrocyclic peptide design with HELM support"
     path: tool-mcps/helm_gpt_mcp
     runtime: python
@@ -250,7 +224,7 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  rf_diffusion_all_atom_mcp:
+  rfpeptides_mcp:
     description: "RFDiffusion All-Atom for cyclic peptide backbone generation"
     path: tool-mcps/rfpeptides_mcp
     runtime: python

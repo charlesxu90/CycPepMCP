@@ -34,3 +34,9 @@ skills:
     - MultiCycPermea_mcp
     - gromacs_mcp
     - amber_mcp
+
+  binder_design_afcycdesign:
+    description: Design cyclic peptide binders using AfCycDesign MCP with AlphaFold-based optimization
+    file_path: workflow-skills/binder_design_afcycdesign.md
+    required_mcps:
+    - afcycdesign_mcp

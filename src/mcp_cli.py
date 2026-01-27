@@ -15,7 +15,7 @@ import click
 from pathlib import Path
 from typing import Optional
 
-from cycpep_mcp.install_mcp import show_available_mcps, show_status, install_mcp_cmd, uninstall_mcp_cmd, search_mcps, show_info
+from .cycpep_mcp.install_mcp import show_available_mcps, show_status, install_mcp_cmd, uninstall_mcp_cmd, search_mcps, show_info
 
 # Logo for CycPepMCP
 LOGO = """\033[36m
@@ -262,7 +262,7 @@ def create_command(github_url: str, local_repo_path: Optional[Path], mcp_dir: Pa
       # Rerun from step 3:
       cpmcp create -l /path/to/repo -d tool-mcps/my_mcp -r 3
     """
-    from cycpep_mcp.create_mcp import create_mcp
+    from .cycpep_mcp.create_mcp import create_mcp
     create_mcp(github_url, local_repo_path, mcp_dir, use_case_filter, api_key, rerun_from_step)
 
 
@@ -278,7 +278,7 @@ def sync_command():
       # Sync registry:
       cpmcp sync
     """
-    from cycpep_mcp.install_mcp import sync_mcps
+    from .cycpep_mcp.install_mcp import sync_mcps
     sync_mcps()
 
 

@@ -8,7 +8,7 @@ from typing import Dict, Optional
 
 import yaml
 
-from ..mcp.install_mcp import install_mcp_cmd, uninstall_mcp_cmd
+from ..cycpep_mcp.install_mcp import install_mcp_cmd, uninstall_mcp_cmd
 from .skill import Skill
 
 

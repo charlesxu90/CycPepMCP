@@ -5,7 +5,7 @@ CycPepMCP - Cyclic Peptide Engineering Model Context Protocol Package
 Setup script for installing CycPepMCP tools.
 """
 
-from setuptools import setup, find_packages
+from setuptools import setup
 from pathlib import Path
 
 # Read the README for long description
@@ -24,8 +24,16 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/Biomolecular-Design-Nexus/CycPepMCP",
-    package_dir={"": "src"},
-    packages=find_packages(where="src"),
+    packages=["cycpepmcp", "cycpepmcp.cycpep_mcp", "cycpepmcp.skill"],
+    package_dir={"cycpepmcp": "src"},
+    include_package_data=True,
+    package_data={
+        'cycpepmcp': [
+            'prompts/*.md',
+            'cycpep_mcp/configs/*.yaml',
+            'skill/configs.yaml',
+        ],
+    },
     python_requires=">=3.9",
     install_requires=[
         "click>=8.0.0",
@@ -42,8 +50,8 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "cpmcp=mcp_cli:main",
-            "cpskill=skill_cli:main",
+            "cpmcp=cycpepmcp.mcp_cli:main",
+            "cpskill=cycpepmcp.skill_cli:main",
         ],
     },
     classifiers=[
@@ -68,6 +76,5 @@ setup(
         "Claude Code",
         "bioinformatics",
     ],
-    include_package_data=True,
     zip_safe=False,
 )
