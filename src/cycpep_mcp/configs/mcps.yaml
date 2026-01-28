@@ -237,7 +237,7 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  rosetta_mcp:
+  rosetta_kic_mcp:
     description: "Rosetta KIC and GeneralizedKIC protocols for cyclic peptide modeling"
     path: tool-mcps/rosetta_kic_mcp
     runtime: python
@@ -293,11 +293,63 @@ mcps:
     description: "Amber MD simulations and free energy calculations"
     path: tool-mcps/amber_mcp
     runtime: python
-    python_version: "3.12"
+    python_version: "3.11"
     server_command: python
     server_args: [src/server.py]
     setup_script: quick_setup.sh
     url: https://github.com/Biomolecular-Design-Nexus/amber_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  proteinmpnn_mcp:
+    description: "> ProteinMPNN MCP server for protein design (inverse folding)"
+    path: tool-mcps/proteinmpnn_mcp
+    runtime: python
+    python_version: "3.10"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/Biomolecular-Design-Nexus/proteinmpnn_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  boltz_mcp:
+    description: "> Boltz2 MCP server for protein structure and affinity prediction"
+    path: tool-mcps/boltz_mcp
+    runtime: python
+    python_version: "3.10"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/Biomolecular-Design-Nexus/boltz_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  boltzgen_mcp:
+    description: "> BoltzGen MCP server for protein binder design"
+    path: tool-mcps/boltzgen_mcp
+    runtime: python
+    python_version: "3.12"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/Biomolecular-Design-Nexus/boltzgen_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  rosetta_mcp:
+    description: "> Model Control Protocol (MCP) server for Rosetta molecular modeling and protein design suite"
+    path: tool-mcps/rosetta_mcp
+    runtime: python
+    python_version: "3.10"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/Biomolecular-Design-Nexus/rosetta_mcp
     source: Tool
     env_vars: {}
     dependencies: []
