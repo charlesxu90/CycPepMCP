@@ -1,0 +1,16 @@
+<ROSETTASCRIPTS>
+  <SIMPLE_METRICS>
+    <RMSDMetric name="RMSD"
+      rmsd_type="rmsd_protein_bb_heavy"
+      use_native="true"
+      super="true" />
+  </SIMPLE_METRICS>
+  <MOVERS>
+    <PeptideCyclizeMover name="pcm" />
+    <RunSimpleMetrics name="run_metric" metrics="RMSD" />
+  </MOVERS>
+  <PROTOCOLS>
+    <Add mover="pcm" />
+    <Add mover="run_metric" />
+  </PROTOCOLS>
+</ROSETTASCRIPTS>
