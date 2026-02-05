@@ -26,7 +26,7 @@ STAGE 5: Structural Diversity & Final Selection (RMSD clustering)
 |------------|---------|----------|
 | `rfpeptides_mcp` | Backbone generation | 1 |
 | `proteinmpnn_mcp` | Sequence design | 2 |
-| `rosetta_mcp` | Structure refinement & metrics | 2, 4 |
+| `rosetta_kic_mcp` | Structure refinement & metrics | 2, 4 |
 | `afcycdesign_mcp` | DL validation | 3 |
 
 ### Input Requirements
@@ -128,8 +128,9 @@ Choose the appropriate submission tool based on design requirements:
 - Multiple backbone-only PDB files (N, CA, C, O atoms)
 - All residues are glycine (sequence to be designed in Stage 2)
 - Files named: `design_0.pdb`, `design_1.pdb`, etc.
+- **Chain assignments:** Binder = Chain A, Target = Chain B
 
-**Important:** These are backbone-only structures - sequence design is required in Stage 2.
+**Important:** These are backbone-only structures - sequence design is required in Stage 2. When using ProteinMPNN, design Chain A (binder) while fixing Chain B (target).
 
 ---
 
@@ -157,12 +158,19 @@ For each backbone from Stage 1:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `input_file` | (required) | Path to backbone PDB |
-| `chains` | null | Space-separated chain IDs to design (e.g., "B") |
+| `chains` | null | Space-separated chain IDs to design (e.g., "A" for binder) |
 | `model` | "v_48_020" | CA-only model version |
 | `num_sequences` | 3 | Number of sequences to generate |
+| `temperature` | 0.1 | Sampling temperature (use 0.0001 for deterministic) |
+| `backbone_noise` | 0.0 | Gaussian noise std dev for backbone atoms |
+| `omit_AAs` | null | Amino acids to exclude (e.g., "C" to avoid disulfides) |
 | `output_dir` | null | Optional directory to save outputs |
 
-> **Note:** The CA-only model does not have a temperature parameter. For diversity across rounds, generate more sequences and select from the pool.
+> **Note:** For cyclic peptide design, recommended settings:
+> - `temperature=0.0001` for near-deterministic sampling (most confident predictions)
+> - `omit_AAs="C"` to exclude cysteine and avoid unwanted disulfide bonds
+> - `backbone_noise=0` to preserve the designed backbone geometry
+> - For diversity, use higher temperature (0.1-0.3) or generate more sequences
 
 **Round-Specific Strategy:**
 - Round 1-2: Generate more sequences (num_sequences=5) for diversity
@@ -174,27 +182,33 @@ For each backbone from Stage 1:
 - Per-residue scores
 - Global sequence recovery metrics
 
+**Cyclic Peptide Design Tips:**
+- **Exclude Cysteine:** Use `omit_AAs="C"` to prevent unwanted disulfide bonds that can disrupt cyclic topology
+- **Low Temperature:** Use `temperature=0.0001` for deterministic, high-confidence sequences
+- **No Backbone Noise:** Use `backbone_noise=0` to maintain the designed cyclic geometry
+- **Higher Diversity:** For exploring sequence space, increase temperature to 0.1-0.3
+
 ### Step 2.B: Rosetta Relax Refinement
 
-**Tool:** `mcp__rosetta_mcp__refine_protein_structure`
+**Tool:** `mcp__rosetta_kic_mcp__submit_cycpep_fast_relax`
 
 **Parameters:**
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `input_file` | (required) | PDB with designed sequence |
-| `trajectories` | 5 | Number of relaxation trajectories |
-| `cycles` | 100 | Monte Carlo cycles per trajectory |
-| `temperature` | 2.0 | Monte Carlo temperature for acceptance |
-| `output_file` | null | Optional path to save results JSON |
+| `input_file` | (required) | PDB with designed sequence (cyclic peptide-target complex) |
+| `rounds` | 4 | Number of FastRelax rounds with PeptideCyclizeMover |
+| `xml` | null | Optional path to custom RosettaScripts XML |
+| `job_name` | null | Optional job identifier |
 
 **Purpose of Relaxation:**
 1. Introduce local backbone changes
 2. Enable more diverse sequences in next round
 3. Resolve steric clashes from sequence design
 4. Optimize side chain rotamers
+5. Maintain cyclic peptide bond via PeptideCyclizeMover
 
 **Output:**
-- Refined PDB structures
+- Refined PDB structures (one per round)
 - Energy scores (Rosetta REU)
 - Select lowest-energy structure for next round
 
@@ -206,26 +220,32 @@ For each design_i.pdb from Stage 1:
 
     For round = 1 to 4:
         # Step 2.A: Sequence Design
+        # Note: RFpeptides outputs binder on chain A, target on chain B
         sequences = ca_only_design(
             input_file=current_structure,
-            chains="B",
+            chains="A",  # Design the binder chain (A), not the target (B)
             model="v_48_020",
-            num_sequences=5
+            num_sequences=5,
+            temperature=0.0001,  # Near-deterministic for best sequence
+            backbone_noise=0,    # Preserve backbone geometry
+            omit_AAs="C"         # Exclude cysteine (no disulfides)
         )
 
-        # Apply best sequence to structure
-        best_sequence_pdb = apply_sequence(current_structure, sequences[0])
+        # Apply best sequence to structure (requires custom script or manual editing)
+        # This step mutates GLY residues to the designed sequence
+        best_sequence_pdb = apply_sequence(current_structure, sequences[0])  # pseudocode
 
-        # Step 2.B: Rosetta Relax
-        relaxed_structures = refine_protein_structure(
+        # Step 2.B: Rosetta Relax (cyclic peptide-aware)
+        relaxed_job = submit_cycpep_fast_relax(
             input_file=best_sequence_pdb,
-            trajectories=5,
-            cycles=100,
-            temperature=2.0
+            rounds=4
         )
+        # Wait for job completion, then retrieve results
+        relaxed_structures = get_job_result(relaxed_job["job_id"])
 
         # Select best relaxed structure for next round
-        current_structure = select_lowest_energy(relaxed_structures)
+        # Parse Rosetta output and select structure with lowest total_score
+        current_structure = select_lowest_energy(relaxed_structures)  # pseudocode
 
     # Save final round 4 structure for validation
     save(current_structure, f"round4_design_{i}.pdb")
@@ -333,75 +353,77 @@ ELSE:
 
 Apply physics-based metrics to validate binding and structural quality.
 
-### Step 4.1: Structure Refinement for Energy Scoring
+### Step 4.1: Compute Interface Metrics (ddG, SAP, CMS)
 
-**Tool:** `mcp__rosetta_mcp__refine_protein_structure`
+**Tool:** `mcp__rosetta_kic_mcp__submit_interface_metrics`
 
-Refine the complex structure to obtain Rosetta energy scores:
-
-**Parameters:**
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `input_file` | (required) | Complex PDB file |
-| `trajectories` | 5 | Number of relaxation trajectories |
-| `cycles` | 100 | Monte Carlo cycles per trajectory |
-| `temperature` | 2.0 | MC temperature |
-
-**Output:** Returns total Rosetta energy scores (REU). Lower scores indicate better structural quality.
-
-### Step 4.2: Mutation Stability Analysis (Optional)
-
-**Tool:** `mcp__rosetta_mcp__calculate_ddg`
-
-Use this to assess stability impact of specific mutations:
+Compute physics-based interface metrics for cyclic peptide-target complexes. The tool applies PeptideCyclizeMover and Cartesian minimization, then computes ddG, SAP, and CMS in a single job.
 
 **Parameters:**
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `input_file` | (required) | Complex PDB file |
-| `mutations` | (required) | Mutations in format "A10G,B15L" |
-| `trajectories` | 5 | Number of trajectories |
-| `repack_radius` | 8.0 | Repacking shell (Å) |
-| `minimize` | true | Minimize after mutation |
+| `input_files` | (required) | List of PDB file paths (complexes from Stage 2/3) |
+| `peptide_chain` | "A" | Peptide chain ID in the PDB |
+| `ddg_threshold` | -40.0 | ddG filter threshold (more negative = better) |
+| `sap_threshold` | 35.0 | SAP filter threshold (lower = better solubility) |
+| `cms_threshold` | 300.0 | CMS filter threshold in Å² (higher = more contact) |
+| `job_name` | null | Optional job identifier |
 
-> **Note:** This calculates ΔΔG for mutations, not binding energy. Negative ΔΔG indicates the mutation is stabilizing.
+**Output:**
+- Per-structure ddG, SAP, CMS values
+- Pass/fail status per structure
+- CSV file with all metrics
+- Summary of how many designs pass filters
 
-### Step 4.3: Additional Metrics (Manual Calculation)
+#### Metric Descriptions
 
-These metrics require custom scripts or Rosetta XML protocols not directly available in the MCP:
-
-#### Interface Binding Energy (ddG_bind)
-- Requires custom InterfaceAnalyzer protocol
-- Calculate as: E_complex - (E_target + E_binder)
+**ddG (Interface Binding Energy)**
+- Computed via Rosetta ddG filter with InterfaceAnalyzer protocol
 - **Thresholds (REU):**
   - Excellent: ddG < -50
   - Good: ddG < -30
   - Acceptable: ddG < -20
 
-#### SAP (Spatial Aggregation Propensity)
+**SAP (Spatial Aggregation Propensity)**
 - Measures surface hydrophobicity
 - **Threshold:** SAP < 35
 - Lower SAP = better solubility
 
-#### CMS (Contact Molecular Surface)
+**CMS (Contact Molecular Surface)**
 - Interface contact area
 - **Threshold:** CMS > 300 Å²
 - Higher CMS = more extensive interface
+
+### Step 4.2: Optional Structure Refinement
+
+**Tool:** `mcp__rosetta_kic_mcp__submit_cycpep_fast_relax`
+
+Use this to further refine complex structures before or after metric computation:
+
+**Parameters:**
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `input_file` | (required) | Complex PDB file |
+| `rounds` | 4 | Number of FastRelax rounds |
+| `xml` | null | Custom XML protocol |
+| `job_name` | null | Optional identifier |
 
 ### Stage 4 Filtering Workflow
 
 ```
 For each validated design from Stage 3:
-    # Refine and get energy scores
-    refined = refine_protein_structure(complex_pdb)
-    total_score = refined.energy
+    # Compute interface metrics (ddG, SAP, CMS)
+    metrics_job = submit_interface_metrics(
+        input_files=[complex_pdb],
+        peptide_chain="A"
+    )
+    # Wait for completion, then retrieve results
+    metrics = get_job_result(metrics_job["job_id"])
 
-    # Use iPAE from Stage 3 as primary binding metric
-    # Total Rosetta score as secondary structural quality metric
-
-    IF iPAE < 0.15 AND total_score < -100:
+    # Use iPAE from Stage 3 + physics metrics for filtering
+    IF iPAE < 0.15 AND ddG < -30 AND SAP < 35 AND CMS > 300:
         → HIGH PRIORITY: Strong predicted binder
-    ELSE IF iPAE < 0.20 AND total_score < -50:
+    ELSE IF iPAE < 0.20 AND ddG < -20:
         → MEDIUM PRIORITY: Acceptable predicted binder
     ELSE:
         → LOW PRIORITY: Weak binding predicted
@@ -413,11 +435,25 @@ For each validated design from Stage 3:
 
 Select diverse, high-quality designs for experimental validation.
 
-### Step 5.1: RMSD Clustering
+### Step 5.1: RMSD Computation
 
-Cluster designs by structural similarity to ensure diversity:
+**Tool:** `mcp__rosetta_kic_mcp__submit_rmsd_benchmark`
 
-1. Calculate pairwise Cα RMSD between all passing designs
+Compute backbone heavy-atom RMSD between predicted and reference structures, or between pairs of designs for clustering.
+
+**Parameters:**
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `input_file` | null | Predicted PDB file (single mode) |
+| `native_file` | null | Native/reference PDB file (single mode) |
+| `input_dir` | null | Directory of predicted PDBs (batch mode) |
+| `native_dir` | null | Directory of native PDBs (batch mode, matched by filename) |
+| `rmsd_cutoff` | 2.0 | RMSD pass/fail cutoff in Angstroms |
+| `job_name` | null | Optional job identifier |
+
+**Clustering Strategy:**
+
+1. Calculate pairwise Cα RMSD between all passing designs using batch mode
 2. Cluster with RMSD cutoff (typically 1.0-2.0 Å)
 3. Identify cluster representatives
 
@@ -576,11 +612,12 @@ Design diverse binders for @target.pdb:
 | 1 | rfpeptides_mcp | `get_job_status` | Monitor job |
 | 1 | rfpeptides_mcp | `get_job_result` | Retrieve backbones |
 | 2 | proteinmpnn_mcp | `ca_only_design` | Sequence design (CA-only) |
-| 2 | rosetta_mcp | `refine_protein_structure` | Backbone relaxation |
+| 2 | rosetta_kic_mcp | `submit_cycpep_fast_relax` | Backbone relaxation with PeptideCyclizeMover |
 | 3 | afcycdesign_mcp | `submit_binder_design` | Complex validation (with binder_seq) |
 | 3 | afcycdesign_mcp | `submit_structure_prediction` | Isolated binder folding |
-| 4 | rosetta_mcp | `refine_protein_structure` | Energy scoring |
-| 4 | rosetta_mcp | `calculate_ddg` | Mutation stability (optional) |
+| 4 | rosetta_kic_mcp | `submit_interface_metrics` | ddG, SAP, CMS interface metrics |
+| 4 | rosetta_kic_mcp | `submit_cycpep_fast_relax` | Optional structure refinement |
+| 5 | rosetta_kic_mcp | `submit_rmsd_benchmark` | Structural RMSD for clustering |
 
 ---
 
