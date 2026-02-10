@@ -159,19 +159,6 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  cyclicboltz_mcp:
-    description: "Biomolecular interaction and binding affinity prediction (Boltz-1/2)"
-    path: tool-mcps/cyclicboltz1_mcp
-    runtime: python
-    python_version: "3.10"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/jwohlwend/boltz
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
   cyclicpeptide_mcp:
     description: "Python package for cyclic peptide drug design and virtual screening"
     path: tool-mcps/cyclicpeptide_mcp
@@ -219,7 +206,7 @@ mcps:
     server_command: python
     server_args: [src/server.py]
     setup_script: quick_setup.sh
-    url: https://github.com/charlesxu90/helm-gpt
+    url: https://github.com/Biomolecular-Design-Nexus/helm_gpt_mcp
     source: Tool
     env_vars: {}
     dependencies: []
@@ -232,7 +219,7 @@ mcps:
     server_command: python
     server_args: [src/server.py]
     setup_script: quick_setup.sh
-    url: https://github.com/baker-laboratory/rf_diffusion_all_atom
+    url: https://github.com/Biomolecular-Design-Nexus/rfpeptides_mcp
     source: Tool
     env_vars: {}
     dependencies: []
@@ -245,7 +232,7 @@ mcps:
     server_command: python
     server_args: [src/server.py]
     setup_script: quick_setup.sh
-    url: https://github.com/RosettaCommons/rosetta
+    url: https://github.com/Biomolecular-Design-Nexus/rosetta_kic_mcp
     source: Tool
     env_vars: {}
     dependencies: []
@@ -337,19 +324,6 @@ mcps:
     server_args: [src/server.py]
     setup_script: quick_setup.sh
     url: https://github.com/Biomolecular-Design-Nexus/boltzgen_mcp
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  rosetta_mcp:
-    description: "> Model Control Protocol (MCP) server for Rosetta molecular modeling and protein design suite"
-    path: tool-mcps/rosetta_mcp
-    runtime: python
-    python_version: "3.10"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/Biomolecular-Design-Nexus/rosetta_mcp
     source: Tool
     env_vars: {}
     dependencies: []
