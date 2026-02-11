@@ -32,7 +32,7 @@
     <ContactMolecularSurface name="contact_molecular_surface" distance_weight="0.5" target_selector="chainA" binder_selector="chainB" confidence="0" />
   </FILTERS>
   <SIMPLE_METRICS>
-    <SapScoreMetric name="sap_score" score_selector="chainB" />
+    <SapScoreMetric name="sap_score" score_selector="chain%%chain%%" />
   </SIMPLE_METRICS>
   <PROTOCOLS>
     <Add mover="pcm" />
