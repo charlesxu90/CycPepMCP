@@ -621,6 +621,98 @@ Design diverse binders for @target.pdb:
 
 ---
 
+## Automated Pipeline Script
+
+For production runs with many backbones, use the unified pipeline script that automates Stages 2-5 with parallel processing and checkpoint-based resume.
+
+**Location:** `workflow-skills/scripts/rfpeptides/run_pipeline.py`
+
+### Basic Usage
+
+```bash
+python workflow-skills/scripts/rfpeptides/run_pipeline.py \
+    --stage1_dir /path/to/rfpeptides/backbones \
+    --target_pdb /path/to/target.pdb \
+    --output_dir results/pipeline_output
+```
+
+### CLI Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--stage1_dir` | (required) | Directory with RFpeptides backbone PDBs |
+| `--target_pdb` | (required) | Target protein PDB file |
+| `--output_dir` | `results/pipeline_output` | Output directory |
+| `--num_rounds` | 4 | ProteinMPNN + Relax iterations |
+| `--workers` | 20 | CPU workers for Stage 2 (parallel) |
+| `--gpu_workers` | 4 | GPU workers for Stage 3 (AfCycDesign) |
+| `--num_gpus` | 2 | GPUs for AfCycDesign rotation |
+| `--ipae_threshold` | 0.3 | iPAE filter threshold |
+| `--ddg_threshold` | -50.0 | ddG filter threshold (REU) |
+| `--sap_threshold` | 35.0 | SAP filter threshold |
+| `--cms_threshold` | 300.0 | CMS filter threshold (A^2) |
+| `--rmsd_cutoff` | 2.0 | RMSD clustering cutoff (A) |
+| `--start_stage` | 2 | Resume from stage (2-5) |
+| `--max_designs` | None | Limit designs (for testing) |
+| `--sequential` | (flag) | Disable parallelism |
+
+### Output Directory Structure
+
+```
+results/pipeline_output/
+├── pipeline.log              # Full execution log
+├── pipeline_config.json      # Run configuration
+├── checkpoint.json           # Resume checkpoint
+├── final_summary.csv         # Ranked results table
+├── stage2/                   # ProteinMPNN + Relax outputs
+│   ├── sequences.csv         # All designed sequences
+│   └── <design_id>/          # Per-design round directories
+├── stage3/                   # AfCycDesign validation
+│   ├── afcycdesign_results.csv
+│   └── <design_id>_afcyc.*   # PDB + JSON per design
+├── stage4/                   # Interface metrics
+│   └── interface_metrics.csv
+└── stage5/                   # Clustering + final selection
+    ├── clusters.json
+    └── cluster*_rep_*.pdb    # Cluster representative PDBs
+```
+
+### Example: Production Run
+
+```bash
+# Full parallel run on 50 backbones
+python workflow-skills/scripts/rfpeptides/run_pipeline.py \
+    --stage1_dir results/backbones \
+    --target_pdb examples/case1_cycpep_design/4HFZ_MDM2.pdb \
+    --output_dir results/mdm2_production \
+    --workers 20 --gpu_workers 4 --num_gpus 2
+
+# Resume from Stage 3 after crash
+python workflow-skills/scripts/rfpeptides/run_pipeline.py \
+    --stage1_dir results/backbones \
+    --target_pdb examples/case1_cycpep_design/4HFZ_MDM2.pdb \
+    --output_dir results/mdm2_production \
+    --start_stage 3
+
+# Quick test with 2 designs, sequential
+python workflow-skills/scripts/rfpeptides/run_pipeline.py \
+    --stage1_dir results/backbones \
+    --target_pdb examples/case1_cycpep_design/4HFZ_MDM2.pdb \
+    --output_dir results/test_run \
+    --max_designs 2 --sequential
+```
+
+### Key Features
+
+- **Auto-detect tool paths** — Resolves ProteinMPNN, Rosetta, and AfCycDesign from `tool-mcps/`
+- **Parallel processing** — ProcessPoolExecutor for CPU (Stage 2) and GPU (Stage 3) work
+- **Checkpoint resume** — Per-design tracking; restart from any stage without re-running completed work
+- **JSON recovery** — Recovers Stage 3 results from existing JSON files after crashes
+- **GPU rotation** — Distributes AfCycDesign jobs across available GPUs
+- **RMSD clustering** — Greedy structural clustering of passing designs (Stage 5)
+
+---
+
 ## Related Workflows
 
 - `binder_design_afcycdesign.md` - AfCycDesign-only binder design
