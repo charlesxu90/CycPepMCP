@@ -23,7 +23,7 @@ setup(
     description="Cyclic Peptide Engineering Model Context Protocol Package",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/Biomolecular-Design-Nexus/CycPepMCP",
+    url="https://github.com/macronex/CycPepMCP",
     packages=["cycpepmcp", "cycpepmcp.cycpep_mcp", "cycpepmcp.skill"],
     package_dir={"cycpepmcp": "src"},
     include_package_data=True,

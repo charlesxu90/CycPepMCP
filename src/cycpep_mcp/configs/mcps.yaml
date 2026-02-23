@@ -1,20 +1,256 @@
 # CycPepMCP - Cyclic Peptide MCP Server Configuration
 # Each MCP can be set up by running: cd <path> && bash quick_setup.sh
 # The quick_setup.sh script supports: --help, --skip-env, --skip-repo options
+# Runtime: "python" (conda env) or "docker" (Docker container from GHCR)
 
 mcps:
-  cpmp_mcp:
-    description: "Cyclic Peptide Membrane Permeability prediction using MAT deep learning"
-    path: tool-mcps/cpmp_mcp
-    runtime: python
+  # ==========================================================================
+  # Docker MCPs - GPU/CUDA, complex deps, multi-env, or external tools
+  # ==========================================================================
+
+  rfpeptides_mcp:
+    description: "RFDiffusion All-Atom for cyclic peptide backbone generation"
+    path: tool-mcps/rfpeptides_mcp
+    runtime: docker
+    docker_image: ghcr.io/macronex/rfpeptides_mcp:latest
+    docker_args: ["--gpus", "all", "--ipc=host"]
+    docker_volumes: []
     python_version: "3.10"
     server_command: python
     server_args: [src/server.py]
     setup_script: quick_setup.sh
-    url: https://github.com/panda1103/CPMP
+    url: https://github.com/macronex/rfpeptides_mcp
     source: Tool
     env_vars: {}
     dependencies: []
+
+  afcycdesign_mcp:
+    description: "Protein design using AlphaFold, TrDesign, ProteinMPNN, and RFdiffusion"
+    path: tool-mcps/afcycdesign_mcp
+    runtime: docker
+    docker_image: ghcr.io/macronex/afcycdesign_mcp:latest
+    docker_args: ["--gpus", "all", "--ipc=host"]
+    docker_volumes: []
+    python_version: "3.10"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/macronex/afcycdesign_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  rosetta_kic_mcp:
+    description: "Rosetta KIC and GeneralizedKIC protocols for cyclic peptide modeling"
+    path: tool-mcps/rosetta_kic_mcp
+    runtime: docker
+    docker_image: ghcr.io/macronex/rosetta_kic_mcp:latest
+    docker_args: ["--gpus", "all"]
+    docker_volumes: []
+    python_version: "3.12"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/macronex/rosetta_kic_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  highfold_med_mcp:
+    description: "Fine-tuned AlphaFold for cyclic peptide structure prediction"
+    path: tool-mcps/highfold_med_mcp
+    runtime: docker
+    docker_image: ghcr.io/macronex/highfold_med_mcp:latest
+    docker_args: ["--gpus", "all", "--ipc=host"]
+    docker_volumes: []
+    python_version: "3.10"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/macronex/highfold_med_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  highfold3_mcp:
+    description: "AlphaFold3-based structure prediction with CycPOEM and Cyclization Switch"
+    path: tool-mcps/highfold3_mcp
+    runtime: docker
+    docker_image: ghcr.io/macronex/highfold3_mcp:latest
+    docker_args: ["--gpus", "all", "--ipc=host"]
+    docker_volumes: []
+    python_version: "3.12"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/macronex/highfold3_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  haddock3_mcp:
+    description: "HADDOCK3 integrative modeling for biomolecular docking"
+    path: tool-mcps/haddock3_mcp
+    runtime: docker
+    docker_image: ghcr.io/macronex/haddock3_mcp:latest
+    docker_args: []
+    docker_volumes: []
+    python_version: "3.12"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/macronex/haddock3_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  helmgpt_mcp:
+    description: "GPT-based de novo macrocyclic peptide design with HELM support"
+    path: tool-mcps/helm_gpt_mcp
+    runtime: docker
+    docker_image: ghcr.io/macronex/helm_gpt_mcp:latest
+    docker_args: ["--gpus", "all", "--ipc=host"]
+    docker_volumes: []
+    python_version: "3.10"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/macronex/helm_gpt_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  cpmp_mcp:
+    description: "Cyclic Peptide Membrane Permeability prediction using MAT deep learning"
+    path: tool-mcps/cpmp_mcp
+    runtime: docker
+    docker_image: ghcr.io/macronex/cpmp_mcp:latest
+    docker_args: ["--gpus", "all"]
+    docker_volumes: []
+    python_version: "3.10"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/macronex/cpmp_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  proteinmpnn_mcp:
+    description: "ProteinMPNN MCP server for protein design (inverse folding)"
+    path: tool-mcps/proteinmpnn_mcp
+    runtime: docker
+    docker_image: ghcr.io/macronex/proteinmpnn_mcp:latest
+    docker_args: ["--gpus", "all", "--ipc=host"]
+    docker_volumes: []
+    python_version: "3.10"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/macronex/proteinmpnn_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  ligandmpnn_mcp:
+    description: "LigandMPNN for structure-aware sequence design"
+    path: tool-mcps/ligandmpnn_mcp
+    runtime: docker
+    docker_image: ghcr.io/macronex/ligandmpnn_mcp:latest
+    docker_args: ["--gpus", "all", "--ipc=host"]
+    docker_volumes: []
+    python_version: "3.11"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/macronex/ligandmpnn_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  boltz_mcp:
+    description: "Boltz2 MCP server for protein structure and affinity prediction"
+    path: tool-mcps/boltz_mcp
+    runtime: docker
+    docker_image: ghcr.io/macronex/boltz_mcp:latest
+    docker_args: ["--gpus", "all", "--ipc=host"]
+    docker_volumes: []
+    python_version: "3.10"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/macronex/boltz_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  boltzgen_mcp:
+    description: "BoltzGen MCP server for protein binder design"
+    path: tool-mcps/boltzgen_mcp
+    runtime: docker
+    docker_image: ghcr.io/macronex/boltzgen_mcp:latest
+    docker_args: ["--gpus", "all", "--ipc=host"]
+    docker_volumes: []
+    python_version: "3.12"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/macronex/boltzgen_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  alphafold3_mcp:
+    description: "AlphaFold3 for biomolecular structure prediction"
+    path: tool-mcps/alphafold3_mcp
+    runtime: docker
+    docker_image: ghcr.io/macronex/alphafold3_mcp:latest
+    docker_args: ["--gpus", "all", "--ipc=host"]
+    docker_volumes: []
+    python_version: "3.11"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/macronex/alphafold3_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  gromacs_mcp:
+    description: "GROMACS molecular dynamics simulations"
+    path: tool-mcps/gromacs_mcp
+    runtime: docker
+    docker_image: ghcr.io/macronex/gromacs_mcp:latest
+    docker_args: ["--gpus", "all"]
+    docker_volumes: []
+    python_version: "3.10"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/macronex/gromacs_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  amber_mcp:
+    description: "Amber MD simulations and free energy calculations"
+    path: tool-mcps/amber_mcp
+    runtime: docker
+    docker_image: ghcr.io/macronex/amber_mcp:latest
+    docker_args: ["--gpus", "all"]
+    docker_volumes: []
+    python_version: "3.11"
+    server_command: python
+    server_args: [src/server.py]
+    setup_script: quick_setup.sh
+    url: https://github.com/macronex/amber_mcp
+    source: Tool
+    env_vars: {}
+    dependencies: []
+
+  # ==========================================================================
+  # Python MCPs - Lightweight, no GPU, manageable deps
+  # ==========================================================================
 
   cyc_builder_mcp:
     description: "Structure-based cyclic peptide design with MCTS and fragment assembly"
@@ -29,19 +265,6 @@ mcps:
     env_vars: {}
     dependencies: []
 
-  afcycdesign_mcp:
-    description: "Protein design using AlphaFold, TrDesign, ProteinMPNN, and RFdiffusion"
-    path: tool-mcps/afcycdesign_mcp
-    runtime: python
-    python_version: "3.10"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/Biomolecular-Design-Nexus/afcycdesign_mcp
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
   cyclicchamp_mcp:
     description: "Heuristic energy-based cyclic peptide design (CyclicChamp)"
     path: tool-mcps/cyclicchamp_mcp
@@ -51,32 +274,6 @@ mcps:
     server_args: [src/server.py]
     setup_script: quick_setup.sh
     url: https://github.com/qiyaozhu/CyclicPeptide
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  highfold_med_mcp:
-    description: "Fine-tuned AlphaFold for cyclic peptide structure prediction"
-    path: tool-mcps/highfold_med_mcp
-    runtime: python
-    python_version: "3.10"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/hongliangduan/HighFold-MeD
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  highfold3_mcp:
-    description: "AlphaFold3-based structure prediction with CycPOEM and Cyclization Switch"
-    path: tool-mcps/highfold3_mcp
-    runtime: python
-    python_version: "3.12"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/hongliangduan/HighFold3
     source: Tool
     env_vars: {}
     dependencies: []
@@ -181,149 +378,6 @@ mcps:
     server_args: [src/server.py]
     setup_script: quick_setup.sh
     url: https://github.com/akiyamalab/cycpeptmp
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  haddock3_mcp:
-    description: "HADDOCK3 integrative modeling for biomolecular docking"
-    path: tool-mcps/haddock3_mcp
-    runtime: python
-    python_version: "3.12"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/haddocking/haddock3
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  helmgpt_mcp:
-    description: "GPT-based de novo macrocyclic peptide design with HELM support"
-    path: tool-mcps/helm_gpt_mcp
-    runtime: python
-    python_version: "3.10"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/Biomolecular-Design-Nexus/helm_gpt_mcp
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  rfpeptides_mcp:
-    description: "RFDiffusion All-Atom for cyclic peptide backbone generation"
-    path: tool-mcps/rfpeptides_mcp
-    runtime: python
-    python_version: "3.10"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/Biomolecular-Design-Nexus/rfpeptides_mcp
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  rosetta_kic_mcp:
-    description: "Rosetta KIC and GeneralizedKIC protocols for cyclic peptide modeling"
-    path: tool-mcps/rosetta_kic_mcp
-    runtime: python
-    python_version: "3.12"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/Biomolecular-Design-Nexus/rosetta_kic_mcp
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  ligandmpnn_mcp:
-    description: "LigandMPNN for structure-aware sequence design"
-    path: tool-mcps/ligandmpnn_mcp
-    runtime: python
-    python_version: "3.11"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/Biomolecular-Design-Nexus/ligandmpnn_mcp
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  alphafold3_mcp:
-    description: "AlphaFold3 for biomolecular structure prediction"
-    path: tool-mcps/alphafold3_mcp
-    runtime: python
-    python_version: "3.11"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/Biomolecular-Design-Nexus/alphafold3_mcp
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  gromacs_mcp:
-    description: "GROMACS molecular dynamics simulations"
-    path: tool-mcps/gromacs_mcp
-    runtime: python
-    python_version: "3.10"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/Biomolecular-Design-Nexus/gromacs_mcp
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  amber_mcp:
-    description: "Amber MD simulations and free energy calculations"
-    path: tool-mcps/amber_mcp
-    runtime: python
-    python_version: "3.11"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/Biomolecular-Design-Nexus/amber_mcp
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  proteinmpnn_mcp:
-    description: "> ProteinMPNN MCP server for protein design (inverse folding)"
-    path: tool-mcps/proteinmpnn_mcp
-    runtime: python
-    python_version: "3.10"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/Biomolecular-Design-Nexus/proteinmpnn_mcp
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  boltz_mcp:
-    description: "> Boltz2 MCP server for protein structure and affinity prediction"
-    path: tool-mcps/boltz_mcp
-    runtime: python
-    python_version: "3.10"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/Biomolecular-Design-Nexus/boltz_mcp
-    source: Tool
-    env_vars: {}
-    dependencies: []
-
-  boltzgen_mcp:
-    description: "> BoltzGen MCP server for protein binder design"
-    path: tool-mcps/boltzgen_mcp
-    runtime: python
-    python_version: "3.12"
-    server_command: python
-    server_args: [src/server.py]
-    setup_script: quick_setup.sh
-    url: https://github.com/Biomolecular-Design-Nexus/boltzgen_mcp
     source: Tool
     env_vars: {}
     dependencies: []

@@ -40,7 +40,7 @@ A comprehensive toolkit for cyclic peptide engineering, non-natural amino acid i
 
 ```bash
 # Clone the repository
-git clone https://github.com/Biomolecular-Design-Nexus/CycPepMCP.git
+git clone https://github.com/macronex/CycPepMCP.git
 cd CycPepMCP
 
 mamba env create -f environment.yml -y
@@ -283,4 +283,4 @@ MIT License - see LICENSE file for details.
 
 ## Acknowledgments
 
-Built following the architecture of [ProteinMCP](https://github.com/Biomolecular-Design-Nexus/ProteinMCP) for protein engineering.
+Built following the architecture of [ProteinMCP](https://github.com/macronex/ProteinMCP) for protein engineering.

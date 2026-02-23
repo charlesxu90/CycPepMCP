@@ -72,6 +72,7 @@ class MCPRuntime(Enum):
     UVX = "uvx"
     NPX = "npx"
     BINARY = "binary"
+    DOCKER = "docker"
 
 
 class MCPScope(Enum):
@@ -126,6 +127,9 @@ class MCP:
     env_vars: Dict[str, str] = field(default_factory=dict)
     dependencies: List[str] = field(default_factory=list)
     path: Optional[str] = None
+    docker_image: Optional[str] = None
+    docker_args: List[str] = field(default_factory=list)
+    docker_volumes: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         """Validate and normalize runtime type"""
@@ -141,6 +145,14 @@ class MCP:
 
     def is_installed(self) -> bool:
         """Check if MCP is installed locally"""
+        if self.runtime == MCPRuntime.DOCKER.value:
+            if not self.docker_image:
+                return False
+            local_image = self._get_local_docker_image()
+            if local_image and self._check_docker_image_exists(local_image):
+                return True
+            return self._check_docker_image_exists(self.docker_image)
+
         if self.path:
             path = resolve_path(self.path)
             return path.exists()
@@ -277,7 +289,10 @@ class MCP:
 
         # Check if already installed
         if self.is_installed() and not force:
-            print(f"MCP '{self.name}' is already installed at: {self.path}")
+            if self.runtime == MCPRuntime.DOCKER.value:
+                print(f"MCP '{self.name}' Docker image already available: {self.docker_image}")
+            else:
+                print(f"MCP '{self.name}' is already installed at: {self.path}")
             return True
 
         # Package-based MCPs don't need installation
@@ -285,6 +300,10 @@ class MCP:
             print(f"MCP '{self.name}' is a {self.runtime} package (no installation needed)")
             self.invalidate_status_cache()
             return True
+
+        # Docker-based MCPs: pull image
+        if self.runtime == MCPRuntime.DOCKER.value:
+            return self._pull_docker_image()
 
         # Handle local tool MCPs (check if already present in tool-mcps directory)
         if self.path:
@@ -559,6 +578,8 @@ class MCP:
             return self._register_uvx(cli, clean_name)
         elif self.runtime == MCPRuntime.NPX.value:
             return self._register_npx(cli, clean_name)
+        elif self.runtime == MCPRuntime.DOCKER.value:
+            return self._register_docker(cli, clean_name)
         elif self.runtime == MCPRuntime.NODE.value:
             return self._register_node(cli, clean_name)
         else:  # Python
@@ -663,6 +684,104 @@ class MCP:
             args.append(arg)
 
         cmd.extend(args)
+
+        return self._run_register_command(cmd, cli, clean_name)
+
+    def _get_local_docker_image(self) -> Optional[str]:
+        """Derive local image name from the GHCR docker_image.
+
+        For example, 'ghcr.io/macronex/rfpeptides_mcp:latest' -> 'rfpeptides_mcp:latest'.
+        Returns None if docker_image is not set or not a registry path.
+        """
+        if not self.docker_image:
+            return None
+        if "/" not in self.docker_image:
+            return None
+        return self.docker_image.split("/")[-1]
+
+    def _check_docker_image_exists(self, image: str) -> bool:
+        """Check if a Docker image exists locally."""
+        try:
+            result = subprocess.run(
+                ["docker", "image", "inspect", image],
+                capture_output=True, text=True, timeout=10
+            )
+            return result.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+
+    def _resolve_docker_image(self) -> Optional[str]:
+        """Resolve which Docker image to use, preferring local over registry."""
+        local_image = self._get_local_docker_image()
+        if local_image and self._check_docker_image_exists(local_image):
+            return local_image
+        if self.docker_image and self._check_docker_image_exists(self.docker_image):
+            return self.docker_image
+        return None
+
+    def _pull_docker_image(self) -> bool:
+        """Pull Docker image for Docker-based MCP."""
+        if not self.docker_image:
+            print(f"No docker_image specified for '{self.name}'")
+            return False
+
+        local_image = self._get_local_docker_image()
+        if local_image and self._check_docker_image_exists(local_image):
+            print(f"Found local Docker image: {local_image}")
+            self.invalidate_status_cache()
+            return True
+
+        if self._check_docker_image_exists(self.docker_image):
+            print(f"Docker image already available: {self.docker_image}")
+            self.invalidate_status_cache()
+            return True
+
+        print(f"Pulling Docker image: {self.docker_image}")
+        try:
+            result = subprocess.run(
+                ["docker", "pull", self.docker_image],
+                capture_output=False, text=True, timeout=1800
+            )
+            if result.returncode != 0:
+                print(f"Docker pull failed for {self.docker_image}")
+                return False
+            print(f"Successfully pulled {self.docker_image}")
+            self.invalidate_status_cache()
+            return True
+        except FileNotFoundError:
+            print("Docker not found. Please install Docker first.")
+            return False
+        except subprocess.TimeoutExpired:
+            print("Docker pull timed out (exceeded 30 minutes)")
+            return False
+
+    def _register_docker(self, cli: str, clean_name: str) -> bool:
+        """Register Docker-based MCP."""
+        import os
+
+        if not self.docker_image:
+            print(f"No docker_image specified for '{clean_name}'")
+            return False
+
+        image = self._resolve_docker_image() or self.docker_image
+
+        cmd = [cli, "mcp", "add", clean_name]
+
+        for key, value in self.env_vars.items():
+            cmd.extend(["--env", f"{key}={value}"])
+
+        cmd.append("--")
+        cmd.extend(["docker", "run", "-i", "--rm"])
+        cmd.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
+        cmd.extend(self.docker_args)
+
+        cwd = os.getcwd()
+        cmd.extend(["-v", f"{cwd}:{cwd}"])
+
+        for vol in self.docker_volumes:
+            cmd.extend(["-v", vol])
+
+        cmd.append(image)
 
         return self._run_register_command(cmd, cli, clean_name)
 
