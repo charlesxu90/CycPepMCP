@@ -780,12 +780,7 @@ class MCP:
             return False
 
     def _register_docker(self, cli: str, clean_name: str) -> bool:
-        """Register Docker-based MCP.
-
-        Uses --entrypoint "" to suppress NVIDIA/PyTorch base image banners
-        that would corrupt the JSON-RPC stdio stream, and explicitly passes
-        the server command (e.g. python src/server.py) as container arguments.
-        """
+        """Register Docker-based MCP."""
         import os
 
         if not self.docker_image:
@@ -803,10 +798,6 @@ class MCP:
         cmd.extend(["docker", "run", "-i", "--rm"])
         cmd.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
 
-        # Override entrypoint to prevent NVIDIA/PyTorch base image banners
-        # from printing to stdout and corrupting the MCP stdio protocol
-        cmd.extend(["--entrypoint", ""])
-
         cmd.extend(self.docker_args)
 
         cwd = os.getcwd()
@@ -816,11 +807,6 @@ class MCP:
             cmd.extend(["-v", vol])
 
         cmd.append(image)
-
-        # Since entrypoint is cleared, pass the server command explicitly
-        server_cmd = self.server_command or "python"
-        cmd.append(server_cmd)
-        cmd.extend(self.server_args)
 
         return self._run_register_command(cmd, cli, clean_name)
 
