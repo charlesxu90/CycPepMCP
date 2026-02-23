@@ -237,6 +237,18 @@ def show_info(mcp_name: str) -> None:
     if mcp.path:
         print(f"  Path: {mcp.path}")
 
+    if mcp.docker_image:
+        print(f"  Docker Image: {mcp.docker_image}")
+        resolved = mcp._resolve_docker_image()
+        if resolved and resolved != mcp.docker_image:
+            print(f"  Active Image: {resolved} (local)")
+        elif resolved:
+            print(f"  Active Image: {resolved}")
+        else:
+            print(f"  Active Image: (not found locally)")
+    if mcp.docker_args:
+        print(f"  Docker Args: {' '.join(mcp.docker_args)}")
+
     print(f"  Status: {status.value}")
     print(f"  Installed: {'Yes' if mcp.is_installed() else 'No'}")
     print(f"  Registered (Claude): {'Yes' if mcp.is_registered('claude') else 'No'}")

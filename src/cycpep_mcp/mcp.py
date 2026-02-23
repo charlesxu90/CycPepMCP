@@ -148,6 +148,7 @@ class MCP:
         if self.runtime == MCPRuntime.DOCKER.value:
             if not self.docker_image:
                 return False
+            # Prefer local image (e.g. afcycdesign_mcp:latest) over registry image
             local_image = self._get_local_docker_image()
             if local_image and self._check_docker_image_exists(local_image):
                 return True
@@ -272,14 +273,19 @@ class MCP:
     # Installation Methods
     # -------------------------------------------------------------------------
 
-    def install(self, force: bool = False, skip_env: bool = False, skip_repo: bool = False) -> bool:
+    def install(self, force: bool = False, skip_env: bool = False, skip_repo: bool = False,
+                capture_output: bool = False) -> bool:
         """
         Install MCP to local machine.
+
+        For Docker MCPs: prefers locally-built images (e.g. afcycdesign_mcp:latest),
+        falls back to pulling from GHCR (e.g. ghcr.io/macronex/afcycdesign_mcp:latest).
 
         Args:
             force: If True, re-install even if already installed
             skip_env: If True, skip environment creation (passed to quick_setup.sh)
             skip_repo: If True, skip repository cloning (passed to quick_setup.sh)
+            capture_output: If True, capture output (for parallel execution)
 
         Returns:
             True if successful, False otherwise
@@ -290,7 +296,8 @@ class MCP:
         # Check if already installed
         if self.is_installed() and not force:
             if self.runtime == MCPRuntime.DOCKER.value:
-                print(f"MCP '{self.name}' Docker image already available: {self.docker_image}")
+                resolved = self._resolve_docker_image()
+                print(f"MCP '{self.name}' Docker image already available: {resolved or self.docker_image}")
             else:
                 print(f"MCP '{self.name}' is already installed at: {self.path}")
             return True
@@ -301,9 +308,9 @@ class MCP:
             self.invalidate_status_cache()
             return True
 
-        # Docker-based MCPs: pull image
+        # Docker-based MCPs: prefer local image, fall back to GHCR pull
         if self.runtime == MCPRuntime.DOCKER.value:
-            return self._pull_docker_image()
+            return self._pull_docker_image(capture_output=capture_output)
 
         # Handle local tool MCPs (check if already present in tool-mcps directory)
         if self.path:
@@ -719,32 +726,49 @@ class MCP:
             return self.docker_image
         return None
 
-    def _pull_docker_image(self) -> bool:
-        """Pull Docker image for Docker-based MCP."""
+    def _pull_docker_image(self, capture_output: bool = False) -> bool:
+        """Pull Docker image for Docker-based MCP.
+
+        Prefers local images (e.g. afcycdesign_mcp:latest built with
+        `docker build -t afcycdesign_mcp:latest tool-mcps/afcycdesign_mcp/`)
+        over registry images (ghcr.io/macronex/afcycdesign_mcp:latest).
+        Only pulls from GHCR if no local image is found.
+
+        Args:
+            capture_output: If True, capture output instead of streaming.
+        """
         if not self.docker_image:
             print(f"No docker_image specified for '{self.name}'")
             return False
 
+        # Check for local image first (e.g. afcycdesign_mcp:latest)
         local_image = self._get_local_docker_image()
         if local_image and self._check_docker_image_exists(local_image):
             print(f"Found local Docker image: {local_image}")
             self.invalidate_status_cache()
             return True
 
+        # Check if the full registry image already exists locally
         if self._check_docker_image_exists(self.docker_image):
             print(f"Docker image already available: {self.docker_image}")
             self.invalidate_status_cache()
             return True
 
+        # Pull from registry
         print(f"Pulling Docker image: {self.docker_image}")
         try:
             result = subprocess.run(
                 ["docker", "pull", self.docker_image],
-                capture_output=False, text=True, timeout=1800
+                capture_output=capture_output, text=True, timeout=1800
             )
             if result.returncode != 0:
+                if capture_output and result.stderr:
+                    print(f"  [{self.name}] {result.stderr.strip()}")
                 print(f"Docker pull failed for {self.docker_image}")
                 return False
+            if capture_output and result.stdout:
+                for line in result.stdout.strip().splitlines():
+                    print(f"  [{self.name}] {line}")
             print(f"Successfully pulled {self.docker_image}")
             self.invalidate_status_cache()
             return True
@@ -756,7 +780,12 @@ class MCP:
             return False
 
     def _register_docker(self, cli: str, clean_name: str) -> bool:
-        """Register Docker-based MCP."""
+        """Register Docker-based MCP.
+
+        Uses --entrypoint "" to suppress NVIDIA/PyTorch base image banners
+        that would corrupt the JSON-RPC stdio stream, and explicitly passes
+        the server command (e.g. python src/server.py) as container arguments.
+        """
         import os
 
         if not self.docker_image:
@@ -773,6 +802,11 @@ class MCP:
         cmd.append("--")
         cmd.extend(["docker", "run", "-i", "--rm"])
         cmd.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
+
+        # Override entrypoint to prevent NVIDIA/PyTorch base image banners
+        # from printing to stdout and corrupting the MCP stdio protocol
+        cmd.extend(["--entrypoint", ""])
+
         cmd.extend(self.docker_args)
 
         cwd = os.getcwd()
@@ -782,6 +816,11 @@ class MCP:
             cmd.extend(["-v", vol])
 
         cmd.append(image)
+
+        # Since entrypoint is cleared, pass the server command explicitly
+        server_cmd = self.server_command or "python"
+        cmd.append(server_cmd)
+        cmd.extend(self.server_args)
 
         return self._run_register_command(cmd, cli, clean_name)
 
