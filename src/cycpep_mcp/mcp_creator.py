@@ -47,7 +47,8 @@ class MCPCreator:
         local_repo_path: str = "",
         use_case_filter: str = "",
         api_key: str = "",
-        rerun_from_step: int = 0
+        rerun_from_step: int = 0,
+        runtime: str = "auto"
     ):
         """
         Initialize MCP Creator
@@ -61,6 +62,7 @@ class MCPCreator:
             use_case_filter: Optional filter for use cases to focus on
             api_key: API key for Claude/Gemini integration testing
             rerun_from_step: Force rerun from this step number (1-8), 0 means no forced rerun
+            runtime: Runtime for deployment artifacts: "uv", "conda", or "auto" (auto-detect)
         """
         self.mcp_dir = mcp_dir.resolve()
         self.github_url = github_url
@@ -70,6 +72,7 @@ class MCPCreator:
         self.use_case_filter = use_case_filter
         self.api_key = api_key
         self.rerun_from_step = rerun_from_step
+        self.runtime = runtime  # will be resolved from "auto" after step 7
 
         if not github_url and not local_repo_path:
             raise ValueError("Either github_url or local_repo_path must be provided")
@@ -405,6 +408,7 @@ class MCPCreator:
         prompt_content = prompt_content.replace('${repo_name}', self.repo_name)
         prompt_content = prompt_content.replace('${project_name}', self.repo_name)
         prompt_content = prompt_content.replace('${mcp_directory}', str(self.mcp_dir))
+        prompt_content = prompt_content.replace('${runtime}', self.runtime)
 
         if run_claude_with_streaming(prompt_content, output_file, self.mcp_dir, self.api_key):
             create_marker(marker)
@@ -429,7 +433,15 @@ class MCPCreator:
 
         log_progress(9, "Generate quick_setup.sh script", "start")
 
-        prompt_file = self.prompts_dir / "generate_quick_setup_prompt.md"
+        # Choose prompt file based on runtime
+        if self.runtime == "uv":
+            prompt_file = self.prompts_dir / "generate_quick_setup_uv_prompt.md"
+            if not prompt_file.exists():
+                # Fall back to generic prompt with runtime variable
+                prompt_file = self.prompts_dir / "generate_quick_setup_prompt.md"
+        else:
+            prompt_file = self.prompts_dir / "generate_quick_setup_prompt.md"
+
         if not prompt_file.exists():
             logger.warning(f"  ⚠️ Prompt file not found: {prompt_file}")
             logger.warning("  Generating default quick_setup.sh instead...")
@@ -451,6 +463,7 @@ class MCPCreator:
         prompt_content = prompt_content.replace('${mcp_name}', self.repo_name)
         prompt_content = prompt_content.replace('${python_version}', python_version)
         prompt_content = prompt_content.replace('${repo_url}', self.github_url or '')
+        prompt_content = prompt_content.replace('${runtime}', self.runtime)
 
         if run_claude_with_streaming(prompt_content, output_file, self.mcp_dir, self.api_key):
             # Ensure quick_setup.sh is executable
@@ -504,10 +517,81 @@ class MCPCreator:
 
         return "3.10"  # Default
 
+    def _detect_runtime(self) -> str:
+        """Auto-detect whether uv or conda is appropriate for deployment.
+
+        Checks for conda-only indicators (CUDA libs, conda-forge packages,
+        environment.yml). If all deps appear pip-installable, returns 'uv'.
+        """
+        # Indicators that conda is needed
+        conda_indicators = []
+
+        # Check for environment.yml with conda-specific channels/deps
+        env_yml = self.mcp_dir / "repo" / self.repo_name / "environment.yml"
+        if not env_yml.exists():
+            env_yml = self.mcp_dir / "environment.yml"
+        if env_yml.exists():
+            try:
+                content = env_yml.read_text().lower()
+                if "conda-forge" in content or "nvidia" in content or "pytorch" in content:
+                    conda_indicators.append(f"environment.yml has conda channels")
+            except Exception:
+                pass
+
+        # Check step3 environment report for conda-specific packages
+        env_report = self.mcp_dir / "reports" / "step3_environment.md"
+        if env_report.exists():
+            try:
+                content = env_report.read_text().lower()
+                conda_only_pkgs = ["rdkit", "openbabel", "cuda-toolkit", "cudatoolkit",
+                                   "pytorch::pytorch", "nvidia", "ambertools"]
+                for pkg in conda_only_pkgs:
+                    if pkg in content:
+                        conda_indicators.append(f"conda-only package: {pkg}")
+            except Exception:
+                pass
+
+        # Check if env/ has conda-specific libraries (CUDA, etc.)
+        env_lib = self.mcp_dir / "env" / "lib"
+        if env_lib.exists():
+            try:
+                cuda_libs = list(env_lib.glob("libcuda*")) + list(env_lib.glob("libnccl*"))
+                if cuda_libs:
+                    conda_indicators.append("CUDA libraries in env/lib")
+            except Exception:
+                pass
+
+        # Check requirements.txt for packages known to need conda
+        req_file = self.mcp_dir / "requirements.txt"
+        if req_file.exists():
+            try:
+                content = req_file.read_text().lower()
+                # These typically need conda or special build steps
+                conda_pkgs = ["rdkit", "openbabel", "ambertools"]
+                for pkg in conda_pkgs:
+                    if pkg in content:
+                        conda_indicators.append(f"conda-only in requirements.txt: {pkg}")
+            except Exception:
+                pass
+
+        if conda_indicators:
+            logger.info(f"🔧 Runtime auto-detected: conda (reasons: {', '.join(conda_indicators)})")
+            return "conda"
+        else:
+            logger.info("🔧 Runtime auto-detected: uv (all deps appear pip-installable)")
+            return "uv"
+
     def _generate_default_quick_setup(self) -> bool:
-        """Generate a default quick_setup.sh script"""
+        """Generate a default quick_setup.sh script based on self.runtime."""
         python_version = self._detect_python_version()
 
+        if self.runtime == "uv":
+            return self._generate_default_quick_setup_uv(python_version)
+        else:
+            return self._generate_default_quick_setup_conda(python_version)
+
+    def _generate_default_quick_setup_conda(self, python_version: str) -> bool:
+        """Generate a default conda-based quick_setup.sh script."""
         quick_setup_content = f'''#!/bin/bash
 # quick_setup.sh - Quick setup script for {self.repo_name}
 #
@@ -655,6 +739,148 @@ echo "  2. Or use: cpmcp install $MCP_NAME"
             logger.error(f"  Failed to create quick_setup.sh: {e}")
             return False
 
+    def _generate_default_quick_setup_uv(self, python_version: str) -> bool:
+        """Generate a default uv-based quick_setup.sh script."""
+        quick_setup_content = f'''#!/bin/bash
+# quick_setup.sh - Quick setup script for {self.repo_name} (uv runtime)
+#
+# Usage:
+#   bash quick_setup.sh [options]
+#
+# Options:
+#   --help      Show this help message
+#   --skip-env  Skip environment creation (use existing env)
+#   --skip-repo Skip repository cloning (repo already present)
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
+MCP_NAME="{self.repo_name}"
+PYTHON_VERSION="{python_version}"
+REPO_URL="{self.github_url or ''}"
+REPO_NAME="{self.repo_name}"
+
+# Colors
+RED='\\033[0;31m'
+GREEN='\\033[0;32m'
+YELLOW='\\033[1;33m'
+BLUE='\\033[0;34m'
+NC='\\033[0m'
+
+log_info() {{ echo -e "${{BLUE}}[INFO]${{NC}} $1"; }}
+log_success() {{ echo -e "${{GREEN}}[SUCCESS]${{NC}} $1"; }}
+log_warning() {{ echo -e "${{YELLOW}}[WARNING]${{NC}} $1"; }}
+log_error() {{ echo -e "${{RED}}[ERROR]${{NC}} $1"; }}
+
+show_help() {{
+    cat << EOF
+$MCP_NAME Quick Setup Script (uv runtime)
+
+Usage:
+    bash quick_setup.sh [options]
+
+Options:
+    --help      Show this help message
+    --skip-env  Skip environment creation (use existing env)
+    --skip-repo Skip repository cloning (repo already present)
+
+Requirements:
+    - uv (https://docs.astral.sh/uv/)
+    - git
+
+EOF
+    exit 0
+}}
+
+SKIP_ENV=false
+SKIP_REPO=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help|-h) show_help ;;
+        --skip-env) SKIP_ENV=true; shift ;;
+        --skip-repo) SKIP_REPO=true; shift ;;
+        *) log_error "Unknown option: $1"; show_help ;;
+    esac
+done
+
+cd "$SCRIPT_DIR"
+log_info "Setting up $MCP_NAME in: $SCRIPT_DIR"
+
+# Check for uv
+if ! command -v uv &> /dev/null; then
+    log_error "uv not found. Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    exit 1
+fi
+log_info "Using uv: $(uv --version)"
+
+# Clone repository
+if [ "$SKIP_REPO" = false ] && [ -n "$REPO_URL" ]; then
+    if [ -d "repo/$REPO_NAME" ]; then
+        log_info "Repository already exists"
+    else
+        log_info "Cloning repository..."
+        mkdir -p repo
+        git clone --depth=1 "$REPO_URL" "repo/$REPO_NAME" || git clone "$REPO_URL" "repo/$REPO_NAME"
+        log_success "Repository cloned"
+    fi
+fi
+
+# Create environment
+if [ "$SKIP_ENV" = false ]; then
+    if [ -d "env" ]; then
+        log_warning "Environment already exists at ./env"
+    else
+        log_info "Creating venv with Python $PYTHON_VERSION..."
+        uv venv env --python $PYTHON_VERSION
+        log_success "Virtual environment created"
+    fi
+fi
+
+if [ ! -f "env/bin/python" ]; then
+    log_error "Environment not found at ./env/bin/python"
+    exit 1
+fi
+
+# Install dependencies
+log_info "Installing dependencies..."
+
+if [ -f "requirements.txt" ]; then
+    uv pip install --python env/bin/python -r requirements.txt
+fi
+
+if [ -f "repo/$REPO_NAME/requirements.txt" ]; then
+    uv pip install --python env/bin/python -r "repo/$REPO_NAME/requirements.txt"
+fi
+
+uv pip install --python env/bin/python fastmcp loguru requests
+
+log_success "Dependencies installed"
+
+# Verify
+log_info "Verifying installation..."
+./env/bin/python -c "import sys; print(f'Python {{sys.version}}')"
+./env/bin/python -c "import fastmcp; print(f'fastmcp {{fastmcp.__version__}}')"
+
+log_success "=============================================="
+log_success "  $MCP_NAME setup completed! (uv runtime)"
+log_success "=============================================="
+echo
+echo "Next steps:"
+echo "  1. Register: claude mcp add $MCP_NAME -- \\$(pwd)/env/bin/python \\$(pwd)/src/server.py"
+echo "  2. Or use: cpmcp install $MCP_NAME"
+'''
+
+        try:
+            quick_setup_path = self.mcp_dir / "quick_setup.sh"
+            quick_setup_path.write_text(quick_setup_content)
+            quick_setup_path.chmod(0o755)
+            logger.info(f"  📜 Default uv quick_setup.sh created: {quick_setup_path}")
+            return True
+        except Exception as e:
+            logger.error(f"  Failed to create quick_setup.sh: {e}")
+            return False
+
     def print_summary(self):
         """Print final pipeline summary"""
         logger.info("\n" + "="*60)
@@ -724,6 +950,12 @@ echo "  2. Or use: cpmcp install $MCP_NAME"
 
             self.step7_test_integration()
             logger.info(f"\n🧪 Integration testing complete\n")
+
+            # Resolve runtime choice between step 7 and step 8
+            if self.runtime == "auto":
+                self.runtime = self._detect_runtime()
+            else:
+                logger.info(f"🔧 Using specified runtime: {self.runtime}")
 
             self.step8_create_readme()
             logger.info(f"\n📄 README documentation created\n")

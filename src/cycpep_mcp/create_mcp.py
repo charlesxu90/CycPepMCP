@@ -95,7 +95,8 @@ def get_default_setup_commands(mcp_dir: Path) -> List[str]:
     return setup_commands
 
 
-def register_created_mcp(mcp_info: dict, github_url: str = "", local_repo_path: str = "") -> bool:
+def register_created_mcp(mcp_info: dict, github_url: str = "", local_repo_path: str = "",
+                         runtime: str = "conda") -> bool:
     """Register a newly created MCP to the mcps.yaml registry and update status cache."""
     try:
         mcp_name = mcp_info.get('name', '')
@@ -104,6 +105,8 @@ def register_created_mcp(mcp_info: dict, github_url: str = "", local_repo_path: 
         source_url = mcp_info.get('source_url', github_url or local_repo_path)
         setup_script = mcp_info.get('setup_script', '')
         python_version = mcp_info.get('python_version', '3.10')
+        # Map runtime choice to registry value: "uv" stays "uv", "conda" becomes "python"
+        registry_runtime = "uv" if runtime == "uv" else "python"
 
         if not mcp_name or not mcp_dir:
             logger.error("❌ Missing MCP name or directory in mcp_info")
@@ -160,7 +163,7 @@ def register_created_mcp(mcp_info: dict, github_url: str = "", local_repo_path: 
             url=github_url if github_url else "",
             description=description,
             source="Tool",
-            runtime="python",
+            runtime=registry_runtime,
             python_version=python_version,
             server_command="python",
             server_args=server_args,
@@ -193,7 +196,8 @@ def register_created_mcp(mcp_info: dict, github_url: str = "", local_repo_path: 
 # ============================================================================
 
 def create_mcp(github_url: str, local_repo_path: Optional[Path], mcp_dir: Path,
-               use_case_filter: str, api_key: str, rerun_from_step: int = 0):
+               use_case_filter: str, api_key: str, rerun_from_step: int = 0,
+               runtime: str = "auto"):
     """
     Create an MCP (Model Context Protocol) server from a GitHub repository or local code.
     """
@@ -225,6 +229,7 @@ def create_mcp(github_url: str, local_repo_path: Optional[Path], mcp_dir: Path,
     logger.info(f"📂 Prompts Directory: {prompts_dir}")
     if rerun_from_step > 0:
         logger.info(f"🔄 Rerun From Step: {rerun_from_step}")
+    logger.info(f"🔧 Runtime: {runtime}")
     logger.info("\n" + "-"*50 + "\n")
 
     creator = MCPCreator(
@@ -235,7 +240,8 @@ def create_mcp(github_url: str, local_repo_path: Optional[Path], mcp_dir: Path,
         local_repo_path=str(local_repo_path) if local_repo_path else "",
         use_case_filter=use_case_filter,
         api_key=api_key,
-        rerun_from_step=rerun_from_step
+        rerun_from_step=rerun_from_step,
+        runtime=runtime
     )
 
     try:
@@ -248,7 +254,8 @@ def create_mcp(github_url: str, local_repo_path: Optional[Path], mcp_dir: Path,
         mcp_info = creator.get_created_mcp_info()
         local_path_str = str(local_repo_path) if local_repo_path else ""
 
-        if register_created_mcp(mcp_info, github_url=github_url, local_repo_path=local_path_str):
+        if register_created_mcp(mcp_info, github_url=github_url, local_repo_path=local_path_str,
+                                runtime=creator.runtime):
             mcp_name = mcp_info.get('name', '')
             registry_name = mcp_name if mcp_name.endswith('_mcp') else f"{mcp_name}_mcp"
 

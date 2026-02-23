@@ -233,8 +233,10 @@ def info_command(mcp_name: str):
 @click.option('--api-key', '-k', default='', help='API key (optional, uses Claude CLI by default)')
 @click.option('--rerun-from-step', '-r', default=0, type=int,
               help='Force rerun from this step number (1-8)')
+@click.option('--runtime', type=click.Choice(['uv', 'conda', 'auto']), default='auto',
+              help='Runtime for deployment artifacts: uv, conda, or auto-detect (default: auto)')
 def create_command(github_url: str, local_repo_path: Optional[Path], mcp_dir: Path,
-                   use_case_filter: str, api_key: str, rerun_from_step: int):
+                   use_case_filter: str, api_key: str, rerun_from_step: int, runtime: str):
     """
     Create an MCP server from a GitHub repository or local code.
 
@@ -247,6 +249,7 @@ def create_command(github_url: str, local_repo_path: Optional[Path], mcp_dir: Pa
     6. Extract MCP tools & wrap in server
     7. Test integration
     8. Create README documentation
+    9. Generate quick_setup.sh script
 
     Examples:
 
@@ -259,11 +262,14 @@ def create_command(github_url: str, local_repo_path: Optional[Path], mcp_dir: Pa
       # With use case filter:
       cpmcp create -g https://github.com/user/repo -d tool-mcps/my_mcp -u "structure prediction, sequence design"
 
+      # Force uv runtime for lightweight MCPs:
+      cpmcp create -g https://github.com/user/repo -d tool-mcps/my_mcp --runtime uv
+
       # Rerun from step 3:
       cpmcp create -l /path/to/repo -d tool-mcps/my_mcp -r 3
     """
     from .cycpep_mcp.create_mcp import create_mcp
-    create_mcp(github_url, local_repo_path, mcp_dir, use_case_filter, api_key, rerun_from_step)
+    create_mcp(github_url, local_repo_path, mcp_dir, use_case_filter, api_key, rerun_from_step, runtime)
 
 
 @cli.command(name="sync")

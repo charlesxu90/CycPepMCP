@@ -10,6 +10,7 @@ You are an expert technical writer and documentation specialist for cyclic pepti
 - `configs/`: Configuration files
 - `env/`: Conda environment
 - `reports/`: All reports from previous steps (step3_use_cases.md, step5_scripts.md, step6_mcp_tools.md, step7_integration.md)
+- **Runtime**: `${runtime}` — the chosen deployment runtime (`uv` or `conda`). Use this to determine which installation instructions to document.
 
 ## Prerequisites
 
@@ -100,16 +101,48 @@ ${detailed_description_of_what_this_mcp_does_for_cyclic_peptides}
 ## Installation
 
 ### Prerequisites
+
+**If runtime is `uv`:**
+- [uv](https://docs.astral.sh/uv/) (fast Python package manager)
+- Python 3.10+
+- ${any_other_prerequisites}
+
+**If runtime is `conda`:**
 - Conda or Mamba (mamba recommended for faster installation)
 - Python 3.10+
 - ${any_other_prerequisites}
 - RDKit (installed automatically)
 
-### Create Environment
-Please strictly following the information in `reports/step3_environment.md` to obtain the procedure to setup the environment. An example workflow is shown below.
+### Quick Setup
 
 \`\`\`bash
 # Navigate to the MCP directory
+cd ${mcp_directory}
+
+# Run the setup script
+bash quick_setup.sh
+\`\`\`
+
+### Manual Environment Setup
+
+Please strictly following the information in `reports/step3_environment.md` to obtain the procedure to setup the environment. Example workflows are shown below.
+
+**If runtime is `uv`:**
+\`\`\`bash
+cd ${mcp_directory}
+
+# Create virtual environment with uv
+uv venv env --python 3.10
+
+# Install dependencies
+uv pip install --python env/bin/python -r requirements.txt
+
+# Install MCP dependencies
+uv pip install --python env/bin/python fastmcp loguru requests
+\`\`\`
+
+**If runtime is `conda`:**
+\`\`\`bash
 cd ${mcp_directory}
 
 # Create conda environment (use mamba if available)
@@ -129,6 +162,8 @@ mamba install -c conda-forge rdkit -y
 # Install MCP dependencies
 pip install fastmcp loguru --ignore-installed
 \`\`\`
+
+**Note:** The chosen runtime for this MCP is **${runtime}**. Use the corresponding instructions above.
 
 ---
 

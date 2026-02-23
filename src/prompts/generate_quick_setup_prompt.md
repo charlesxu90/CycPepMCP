@@ -10,6 +10,7 @@ You are an expert at creating shell setup scripts for cyclic peptide computation
 - `repo/`: The cloned repository with original setup information
 - `env/`: The conda environment (if already created)
 - `src/server.py`: The MCP server file
+- **Runtime**: `${runtime}` — the chosen deployment runtime (`uv` or `conda`). Generate the script accordingly.
 
 ## Task
 
