@@ -233,7 +233,7 @@ mcps:
     setup_script: quick_setup.sh
     source: Tool
     url: https://github.com/macronex/haddock3_mcp
-  helmgpt_mcp:
+  helm_gpt_mcp:
     dependencies: []
     description: GPT-based de novo macrocyclic peptide design with HELM support
     docker_args:
