@@ -158,7 +158,7 @@ mcps:
     env_vars: {}
     path: tool-mcps/cyclicchamp_mcp
     python_version: '3.12'
-    runtime: python
+    runtime: uv
     server_args:
     - src/server.py
     server_command: python
@@ -221,12 +221,11 @@ mcps:
     dependencies: []
     description: HADDOCK3 integrative modeling for biomolecular docking
     docker_args: []
-    docker_image: ghcr.io/macronex/haddock3_mcp:latest
     docker_volumes: []
     env_vars: {}
     path: tool-mcps/haddock3_mcp
     python_version: '3.12'
-    runtime: docker
+    runtime: uv
     server_args:
     - src/server.py
     server_command: python
@@ -303,7 +302,7 @@ mcps:
     env_vars: {}
     path: tool-mcps/highplay_mcp
     python_version: '3.10'
-    runtime: python
+    runtime: uv
     server_args:
     - src/server.py
     server_command: python
@@ -339,7 +338,7 @@ mcps:
     env_vars: {}
     path: tool-mcps/multicycgt_mcp
     python_version: '3.10'
-    runtime: python
+    runtime: uv
     server_args:
     - src/server.py
     server_command: python
@@ -355,7 +354,7 @@ mcps:
     env_vars: {}
     path: tool-mcps/multicycpermea_mcp
     python_version: '3.10'
-    runtime: python
+    runtime: uv
     server_args:
     - src/server.py
     server_command: python
@@ -371,7 +370,7 @@ mcps:
     env_vars: {}
     path: tool-mcps/pepflow_mcp
     python_version: '3.10'
-    runtime: python
+    runtime: uv
     server_args:
     - src/server.py
     server_command: python
@@ -403,7 +402,7 @@ mcps:
     env_vars: {}
     path: tool-mcps/pharmpapp_mcp
     python_version: '3.10'
-    runtime: python
+    runtime: uv
     server_args:
     - src/server.py
     server_command: python

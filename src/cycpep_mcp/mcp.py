@@ -73,6 +73,7 @@ class MCPRuntime(Enum):
     NPX = "npx"
     BINARY = "binary"
     DOCKER = "docker"
+    UV = "uv"
 
 
 class MCPScope(Enum):
@@ -153,6 +154,12 @@ class MCP:
             if local_image and self._check_docker_image_exists(local_image):
                 return True
             return self._check_docker_image_exists(self.docker_image)
+
+        if self.runtime == MCPRuntime.UV.value:
+            if self.path:
+                env_python = resolve_path(self.path) / "env" / "bin" / "python"
+                return env_python.exists()
+            return False
 
         if self.path:
             path = resolve_path(self.path)
@@ -311,6 +318,10 @@ class MCP:
         # Docker-based MCPs: prefer local image, fall back to GHCR pull
         if self.runtime == MCPRuntime.DOCKER.value:
             return self._pull_docker_image(capture_output=capture_output)
+
+        # UV-based MCPs: create venv with uv and install deps
+        if self.runtime == MCPRuntime.UV.value:
+            return self._install_uv(capture_output=capture_output)
 
         # Handle local tool MCPs (check if already present in tool-mcps directory)
         if self.path:
@@ -589,6 +600,8 @@ class MCP:
             return self._register_docker(cli, clean_name)
         elif self.runtime == MCPRuntime.NODE.value:
             return self._register_node(cli, clean_name)
+        elif self.runtime == MCPRuntime.UV.value:
+            return self._register_uv(cli, clean_name)
         else:  # Python
             return self._register_python(cli, clean_name)
 
@@ -640,6 +653,137 @@ class MCP:
     def _get_clean_name(self) -> str:
         """Get cleaned name for CLI registration"""
         return self.name.replace("/", "_").replace("-", "_")
+
+    def _install_uv(self, capture_output: bool = False) -> bool:
+        """
+        Install UV-based MCP by creating a uv venv and installing dependencies.
+
+        Args:
+            capture_output: If True, capture output instead of streaming.
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.path:
+            print(f"No path specified for UV MCP '{self.name}'")
+            return False
+
+        if not shutil.which("uv"):
+            print("uv not found. Install with: curl -LsSf https://astral.sh/uv/install.sh | sh")
+            return False
+
+        mcp_path = resolve_path(self.path)
+        if not mcp_path.exists():
+            print(f"MCP directory not found: {mcp_path}")
+            return False
+
+        env_path = mcp_path / "env"
+        python_version = self.python_version or "3.10"
+
+        # Create venv with uv
+        print(f"Creating uv venv for {self.name} (Python {python_version})...")
+        try:
+            result = subprocess.run(
+                ["uv", "venv", str(env_path), "--python", python_version],
+                capture_output=capture_output,
+                text=True,
+                timeout=120,
+                cwd=str(mcp_path),
+            )
+            if result.returncode != 0:
+                stderr = result.stderr if capture_output else ""
+                print(f"uv venv creation failed: {stderr}")
+                return False
+        except FileNotFoundError:
+            print("uv not found")
+            return False
+        except subprocess.TimeoutExpired:
+            print("uv venv creation timed out")
+            return False
+
+        # Install dependencies from requirements.txt if it exists
+        requirements_file = mcp_path / "requirements.txt"
+        if requirements_file.exists():
+            print(f"Installing dependencies from requirements.txt...")
+            try:
+                result = subprocess.run(
+                    ["uv", "pip", "install", "-r", str(requirements_file),
+                     "--python", str(env_path / "bin" / "python")],
+                    capture_output=capture_output,
+                    text=True,
+                    timeout=600,
+                    cwd=str(mcp_path),
+                )
+                if result.returncode != 0:
+                    stderr = result.stderr if capture_output else ""
+                    print(f"uv pip install failed: {stderr}")
+                    return False
+            except subprocess.TimeoutExpired:
+                print("uv pip install timed out")
+                return False
+
+        # Always ensure core dependencies are installed
+        core_deps = ["fastmcp", "loguru", "click"]
+        print(f"Ensuring core dependencies: {', '.join(core_deps)}")
+        try:
+            result = subprocess.run(
+                ["uv", "pip", "install"] + core_deps +
+                ["--python", str(env_path / "bin" / "python")],
+                capture_output=capture_output,
+                text=True,
+                timeout=120,
+                cwd=str(mcp_path),
+            )
+            if result.returncode != 0:
+                stderr = result.stderr if capture_output else ""
+                print(f"Core deps install failed: {stderr}")
+                # Non-fatal: requirements.txt may already cover these
+        except subprocess.TimeoutExpired:
+            pass
+
+        print(f"Successfully installed UV environment for {self.name}")
+        self.invalidate_status_cache()
+        return True
+
+    def _register_uv(self, cli: str, clean_name: str) -> bool:
+        """Register UV-based MCP (uses the uv venv's python)."""
+        if not self.path:
+            print(f"MCP not installed. Run install() first.")
+            return False
+
+        mcp_path = resolve_path(self.path)
+        env_python = mcp_path / "env" / "bin" / "python"
+
+        if not env_python.exists():
+            print(f"UV environment not found at {env_python}")
+            print(f"Run 'cpmcp install {self.name}' first.")
+            return False
+
+        cmd = [cli, "mcp", "add", clean_name]
+
+        for key, value in self.env_vars.items():
+            cmd.extend(["--env", f"{key}={value}"])
+
+        cmd.append("--")
+        cmd.append(str(env_python.resolve()))
+
+        if self.server_command and self.server_args:
+            args = []
+            for arg in self.server_args:
+                arg = arg.replace("$MCP_PATH", str(mcp_path))
+                arg_path = Path(arg)
+                if not arg_path.is_absolute() and (arg.endswith('.py') or '/' in arg):
+                    arg = str(mcp_path / arg)
+                args.append(arg)
+            cmd.extend(args)
+        else:
+            server_path = self._find_server_entry()
+            if not server_path:
+                print(f"Could not find server entry point in: {self.path}")
+                return False
+            cmd.append(str(server_path))
+
+        return self._run_register_command(cmd, cli, clean_name)
 
     def _register_uvx(self, cli: str, clean_name: str) -> bool:
         """Register uvx-based MCP"""

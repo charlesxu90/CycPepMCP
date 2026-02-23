@@ -1,286 +1,216 @@
 # CycPepMCP
 
-Cyclic Peptide Engineering Model Context Protocol Package
+Cyclic peptide engineering toolkit for [Claude Code](https://claude.ai/code) via the Model Context Protocol (MCP). 26 MCP servers covering backbone generation, sequence design, structure prediction, MD simulation, and property optimization.
 
-A comprehensive toolkit for cyclic peptide engineering, non-natural amino acid incorporation, peptide design, and analysis using the Model Context Protocol (MCP) for Claude Code.
+## Prerequisites
 
-## Features
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI installed
+- Python 3.10+ with [conda/mamba](https://github.com/conda-forge/miniforge)
+- [uv](https://docs.astral.sh/uv/) (for lightweight MCPs)
+- [Docker](https://docs.docker.com/get-docker/) with NVIDIA GPU support (for GPU MCPs)
 
-- **Cyclic Peptide Design**: Design cyclic peptides with various cyclization strategies
-  - Head-to-tail backbone cyclization
-  - Disulfide bridge formation
-  - Side-chain lactam bridges
-  - Thioether linkages
-
-- **Non-Natural Amino Acids**: Incorporate non-canonical amino acids
-  - D-amino acids for proteolytic stability
-  - N-methylated amino acids for permeability
-  - Alpha-methylated amino acids for conformational constraint
-  - Beta-amino acids for backbone modification
-
-- **Property Prediction**: Predict key physicochemical properties
-  - Molecular weight and charge
-  - Solubility and membrane permeability
-  - Proteolytic stability
-  - Conformational flexibility
-
-- **Workflow Skills**: Pre-built workflows for common tasks
-  - Cyclic peptide design workflow
-  - NNAA incorporation workflow
-  - Permeability optimization workflow
-
-## Installation
-
-### Prerequisites
-
-- Python 3.10+
-- Claude Code CLI installed and configured
-
-### Install CycPepMCP
+## Install CycPepMCP
 
 ```bash
-# Clone the repository
 git clone https://github.com/macronex/CycPepMCP.git
 cd CycPepMCP
 
 mamba env create -f environment.yml -y
 mamba activate cycpepmcp
 pip install -r requirements.txt
-# Install in development mode
 pip install -e .
 ```
 
-## Quick Start
+## Install MCP Servers
 
-### List Available MCPs
-
-```bash
-cpmcp avail
-```
-
-### Install an MCP
+Each MCP uses one of three runtimes: **uv** (fast, lightweight), **docker** (GPU/complex deps, local build preferred), or **python** (conda).
 
 ```bash
-cpmcp install cycpep_design_mcp
-```
-
-### Check MCP Status
-
-```bash
-cpmcp status
-```
-
-### List Available Skills
-
-```bash
-cpskill avail
-```
-
-### Install a Skill
-
-```bash
-cpskill install cycpep_design
-```
-
-## CLI Commands
-
-### cpmcp - MCP Management
-
-```bash
-# Show all available MCPs
+# See all available MCPs and their runtimes
 cpmcp avail
 
-# Show MCP status
-cpmcp status
-
-# Install MCP(s)
+# Install any MCP (auto-detects runtime)
 cpmcp install <mcp_name>
-cpmcp install mcp1 mcp2 mcp3
 
-# Uninstall MCP
-cpmcp uninstall <mcp_name>
-
-# Search MCPs
-cpmcp search <query>
-
-# Show MCP info
-cpmcp info <mcp_name>
+# Check what's installed
+cpmcp status
 ```
 
-### cpskill - Skill Management
+### UV MCPs (lightweight, no GPU)
+
+Fastest to install. `cpmcp install` creates a `uv` virtualenv and installs pip dependencies automatically.
 
 ```bash
-# Show available skills
-cpskill avail
-
-# Show skill status
-cpskill status
-
-# Install skill and its MCPs
-cpskill install <skill_name>
-
-# Execute skill (guided workflow)
-cpskill execute <skill_name>
-
-# Uninstall skill
-cpskill uninstall <skill_name>
-
-# Create new skill
-cpskill create init <skill_name>
-cpskill create add-step <skill_name>
-cpskill create generate <skill_name>
+# Example: install a lightweight MCP
+cpmcp install cyclicchamp_mcp
 ```
 
-## Tool MCPs
+| MCP | Description |
+|-----|-------------|
+| `cyclicchamp_mcp` | Heuristic energy-based cyclic peptide design |
+| `haddock3_mcp` | HADDOCK3 integrative modeling for docking |
+| `highplay_mcp` | RL-based cyclic peptide sequence design (MCTS) |
+| `multicycgt_mcp` | GCN+Transformer membrane permeability prediction |
+| `multicycpermea_mcp` | Multimodal permeability prediction (images + SMILES) |
+| `pepflow_mcp` | Performance estimation optimization workflow |
+| `pharmpapp_mcp` | Permeability prediction (Caco-2, RRCK, PAMPA) |
 
-### cycpep_design_mcp
-Design cyclic peptides with various cyclization strategies.
+### Docker MCPs (GPU, complex dependencies)
 
-**Tools:**
-- `design_cyclic_peptide` - Design a cyclic peptide from linear sequence
-- `analyze_cyclization_sites` - Analyze potential cyclization sites
-- `generate_cyclic_variants` - Generate variant sequences
-- `predict_cyclic_peptide_properties` - Predict physicochemical properties
-- `list_example_sequences` - List example sequences
+For GPU-accelerated tools. **Local builds are preferred** over pulling from GHCR — they're faster and let you customize.
 
-### nnaa_mcp
-Incorporate non-natural amino acids into peptides.
+```bash
+# Build locally (preferred)
+cd tool-mcps/afcycdesign_mcp
+docker build -t afcycdesign_mcp:latest .
+cd ../..
 
-**Tools:**
-- `analyze_nnaa_sites` - Find optimal positions for NNAA
-- `select_nnaa` - Choose appropriate modifications
-- `generate_modified_sequence` - Create NNAA-containing sequences
-- `predict_modification_effects` - Predict property changes
+# Then install — auto-detects the local image
+cpmcp install afcycdesign_mcp
 
-### peptide_permeability_mcp
-Predict and optimize cell membrane permeability.
+# Or pull from GHCR (fallback, if no local image)
+cpmcp install rfpeptides_mcp
+```
 
-### peptide_stability_mcp
-Predict proteolytic stability and half-life.
+To build all Docker MCPs locally:
+
+```bash
+for mcp_dir in tool-mcps/*/; do
+  if [ -f "$mcp_dir/Dockerfile" ]; then
+    name=$(basename "$mcp_dir")
+    echo "Building $name..."
+    docker build -t "${name}:latest" "$mcp_dir"
+  fi
+done
+```
+
+| MCP | Description |
+|-----|-------------|
+| `rfpeptides_mcp` | RFDiffusion All-Atom for cyclic peptide backbone generation |
+| `proteinmpnn_mcp` | ProteinMPNN inverse folding sequence design |
+| `afcycdesign_mcp` | AlphaFold-based cyclic peptide design & validation |
+| `rosetta_kic_mcp` | Rosetta KIC/GenKIC for cyclic peptide modeling |
+| `helmgpt_mcp` | GPT-based de novo macrocyclic peptide design (HELM) |
+| `boltz_mcp` | Boltz2 structure & affinity prediction |
+| `boltzgen_mcp` | BoltzGen protein binder design |
+| `highfold_med_mcp` | Fine-tuned AlphaFold for cyclic peptides |
+| `highfold3_mcp` | AlphaFold3 with CycPOEM & Cyclization Switch |
+| `alphafold3_mcp` | AlphaFold3 biomolecular structure prediction |
+| `ligandmpnn_mcp` | LigandMPNN structure-aware sequence design |
+| `cpmp_mcp` | MAT deep learning membrane permeability prediction |
+| `gromacs_mcp` | GROMACS molecular dynamics simulations |
+| `amber_mcp` | Amber MD simulations & free energy calculations |
+
+### Conda MCPs (legacy)
+
+These require conda environments (run `quick_setup.sh` in each MCP directory):
+
+| MCP | Description |
+|-----|-------------|
+| `ADCP_mcp` | AutoDock CrankPep conformational sampling |
+| `cyc_builder_mcp` | MCTS + fragment assembly cyclic peptide design |
+| `cyclicpeptide_mcp` | Cyclic peptide drug design & virtual screening |
+| `cycpeptmp_mcp` | Multi-level feature permeability prediction |
+| `pepflowww_mcp` | Full-atom peptide design via flow matching (ICML 2024) |
 
 ## Workflow Skills
 
-### cycpep_design
-Complete workflow for designing cyclic peptides.
+Multi-step protocols that orchestrate multiple MCPs into complete design pipelines.
 
 ```bash
-cpskill install cycpep_design
-cpskill execute cycpep_design
+# List available workflows
+cpskill avail
+
+# Install a workflow (also installs required MCPs)
+cpskill install binder_design_rfpeptides
+
+# Run step-by-step
+cpskill execute binder_design_rfpeptides
 ```
 
-### nnaa_incorporation
-Workflow for incorporating non-natural amino acids.
+### Binder Design Workflow (RFpeptides)
+
+The primary 5-stage pipeline for designing cyclic peptide binders:
+
+1. **Backbone Generation** — RFpeptides generates cyclic peptide backbones against a target protein
+2. **Sequence Design** — 4 rounds of ProteinMPNN (CA-only) + Rosetta FastRelax
+3. **DL Validation** — AfCycDesign reprediction (iPAE, RMSD, pLDDT)
+4. **Physics Filtering** — Rosetta interface metrics (ddG, SAP, CMS)
+5. **Clustering & Selection** — RMSD-based clustering, ranked by composite score
+
+Quality thresholds:
+
+| Metric | Threshold | Meaning |
+|--------|-----------|---------|
+| ddG | < -30 REU | Binding energy |
+| SAP | < 35 | Aggregation propensity |
+| CMS | > 300 A^2 | Contact surface area |
+| iPAE | < 0.20 | Interface confidence |
+| RMSD | < 1.5 A | Reprediction fidelity |
+| pLDDT | > 0.70 | Per-residue confidence |
+
+## CLI Reference
+
+### cpmcp (MCP management)
 
 ```bash
-cpskill install nnaa_incorporation
-cpskill execute nnaa_incorporation
+cpmcp avail                    # List all MCPs with runtime info
+cpmcp status                   # Show installed/registered status
+cpmcp status --refresh         # Refresh status cache
+cpmcp install <name>           # Install + register with Claude Code
+cpmcp install <name> --no-register  # Install only
+cpmcp uninstall <name>         # Unregister from Claude Code
+cpmcp info <name>              # Show MCP details
+cpmcp search <query>           # Search by name/description
+cpmcp sync                     # Sync registry with filesystem
 ```
 
-## Creating New Skills
+### cpskill (workflow management)
 
-1. Initialize a new skill:
 ```bash
-cpskill create init my_skill -d "Description" -m mcp1 -m mcp2
+cpskill avail                  # List available workflows
+cpskill install <name>         # Install workflow + required MCPs
+cpskill execute <name>         # Run workflow step-by-step
+cpskill uninstall <name>       # Remove workflow
 ```
 
-2. Add steps interactively:
+## Example: MDM2 Binder Design
+
 ```bash
-cpskill create add-step my_skill
+# Install the three core MCPs
+cpmcp install rfpeptides_mcp
+cpmcp install proteinmpnn_mcp
+cpmcp install afcycdesign_mcp
+
+# Target PDB is included
+ls examples/case1_cycpep_design/4HFZ_MDM2.pdb
+
+# Use Claude Code to run the workflow
+# MDM2 hotspot residues: 54, 56, 58, 61, 67, 96, 99, 100
 ```
 
-3. Generate the skill file:
-```bash
-cpskill create generate my_skill
-```
-
-4. Install the skill:
-```bash
-cpskill install my_skill
-```
-
-## Creating New MCPs
-
-1. Create a new directory in `tool-mcps/`:
-```bash
-mkdir -p tool-mcps/my_mcp/src
-```
-
-2. Create `server.py` using FastMCP:
-```python
-from fastmcp import FastMCP
-
-mcp = FastMCP("my-mcp")
-
-@mcp.tool()
-def my_tool(param: str) -> dict:
-    """Tool description."""
-    return {"result": param}
-
-if __name__ == "__main__":
-    mcp.run()
-```
-
-3. Add to `src/mcp/configs/mcps.yaml`
-
-4. Install and register:
-```bash
-cpmcp install my_mcp
-```
-
-## Directory Structure
+## Architecture
 
 ```
 CycPepMCP/
 ├── src/
-│   ├── __init__.py
-│   ├── mcp_cli.py              # cpmcp command
-│   ├── skill_cli.py            # cpskill command
-│   ├── mcp/
-│   │   ├── mcp.py              # MCP class
-│   │   ├── mcp_manager.py      # MCP management
-│   │   ├── install_mcp.py      # Installation functions
-│   │   ├── status_cache.py     # Status caching
-│   │   └── configs/
-│   │       ├── mcps.yaml       # Local MCP configs
-│   │       └── public_mcps.yaml
-│   └── skill/
-│       ├── skill.py            # Skill class
-│       ├── skill_manager.py    # Skill management
-│       ├── create_skill.py     # Skill creation
-│       └── configs.yaml        # Skill configs
-├── tool-mcps/                   # MCP server implementations
-│   ├── cycpep_design_mcp/
-│   ├── nnaa_mcp/
-│   └── public/
-├── workflow-skills/             # Workflow skill definitions
-│   ├── cycpep_design.md
-│   └── nnaa_incorporation.md
-├── examples/                    # Example data and usage
-├── setup.py
-├── requirements.txt
-└── README.md
+│   ├── mcp_cli.py              # cpmcp CLI
+│   ├── skill_cli.py            # cpskill CLI
+│   ├── cycpep_mcp/             # MCP management (registry, install, status)
+│   └── skill/                  # Workflow skill management
+├── tool-mcps/                  # 26 MCP server implementations
+│   └── <mcp_name>/
+│       ├── src/server.py       # FastMCP server
+│       ├── requirements.txt    # Python dependencies
+│       ├── Dockerfile          # (docker MCPs only)
+│       └── quick_setup.sh      # Setup script
+├── workflow-skills/            # Multi-step workflow definitions (.md)
+├── examples/                   # Example data (PDBs, sequences)
+└── details.md                  # Extended feature documentation
 ```
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit pull requests.
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+See [details.md](details.md) for extended documentation.
 
 ## License
 
 MIT License - see LICENSE file for details.
-
-## References
-
-- Craik, D.J. et al. (2013). The Future of Peptide-based Drugs. Chem. Biol. Drug Des.
-- White, C.J. & Yudin, A.K. (2011). Contemporary strategies for peptide macrocyclization. Nat. Chem.
-- Driggers, E.M. et al. (2008). The exploration of macrocycles for drug discovery. Nat. Rev. Drug Discov.
-- Blaskovich, M.A. (2016). Unusual amino acids in medicinal chemistry. J. Med. Chem.
-
-## Acknowledgments
-
-Built following the architecture of [ProteinMCP](https://github.com/macronex/ProteinMCP) for protein engineering.
