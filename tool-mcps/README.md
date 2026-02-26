@@ -32,6 +32,7 @@ This directory contains all MCP (Model Context Protocol) servers available in Cy
 | 24 | [proteinmpnn_mcp](#proteinmpnn_mcp) | ProteinMPNN inverse folding for protein/peptide sequence design | Docker | Yes |
 | 25 | [rfpeptides_mcp](#rfpeptides_mcp) | RFDiffusion All-Atom for cyclic peptide backbone generation | Docker | Yes |
 | 26 | [rosetta_kic_mcp](#rosetta_kic_mcp) | Rosetta KIC/GeneralizedKIC for cyclic peptide modeling | Docker | Yes |
+| 27 | [rosetta_mcp](#rosetta_mcp) | Protein modeling and design using the Rosetta suite | Docker | Yes |
 
 **Runtime types:** Docker (GPU containerized), Conda (local conda env), UV (lightweight uv venv)
 
@@ -75,6 +76,7 @@ This directory contains all MCP (Model Context Protocol) servers available in Cy
 | amber_mcp | Amber | PDB + parameters | MD trajectories, free energy |
 | gromacs_mcp | GROMACS | PDB + topology | MD trajectories |
 | rosetta_kic_mcp | Rosetta KIC/GenKIC | PDB | Relaxed structures, ddG, interface metrics |
+| rosetta_mcp | Rosetta suite | PDB | Modeling, relaxation, scoring, design |
 | haddock3_mcp | HADDOCK3 | PDB + restraints | Docked complexes |
 | adcp_mcp | AutoDock CrankPep | Peptide + receptor | Docked conformations |
 
@@ -313,13 +315,20 @@ Rosetta Kinematic Closure and GeneralizedKIC protocols for cyclic peptide loop m
 
 Source: [macronex/rosetta_kic_mcp](https://github.com/macronex/rosetta_kic_mcp)
 
+### rosetta_mcp
+**Rosetta suite modeling and design** | Docker (GPU)
+
+General-purpose Rosetta MCP server for protein modeling and design including relaxation, scoring, ab initio folding, and structure manipulation.
+
+Source: [macronex/rosetta_mcp](https://github.com/macronex/rosetta_mcp)
+
 ---
 
 ## Runtime Summary
 
 | Runtime | Count | Description |
 |---------|-------|-------------|
-| Docker | 14 | GPU-accelerated, containerized with pre-built images |
+| Docker | 15 | GPU-accelerated, containerized with pre-built images |
 | UV | 7 | Lightweight, pip-only dependencies via uv |
 | Conda | 5 | Local conda/mamba environment with compiled dependencies |
 

@@ -469,3 +469,22 @@ mcps:
     setup_script: quick_setup.sh
     source: Tool
     url: https://github.com/macronex/rosetta_kic_mcp
+  rosetta_mcp:
+    dependencies: []
+    description: Protein modeling and design using the Rosetta suite via Docker
+    docker_args:
+    - --gpus
+    - all
+    docker_image: ghcr.io/macronex/rosetta_mcp:latest
+    docker_volumes: []
+    env_vars: {}
+    path: tool-mcps/rosetta_mcp
+    python_version: '3.10'
+    runtime: docker
+    server_args:
+    - src/server.py
+    server_command: python
+    setup_commands: []
+    setup_script: quick_setup.sh
+    source: Tool
+    url: https://github.com/macronex/rosetta_mcp
