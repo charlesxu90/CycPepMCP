@@ -477,6 +477,69 @@ For each cluster, rank designs by:
 
 ---
 
+## Stage 6: Visualize Results
+
+Generate publication-quality figures summarizing the pipeline results.
+
+### Step 6.1: Generate Visualization Figures
+
+**Script:** `workflow-skills/scripts/rfpeptides/rfpeptides_viz.py`
+
+**Input:** `final_summary.csv` from the pipeline output directory
+
+**Usage:**
+
+```bash
+# Generate 6 separate figures (default)
+python workflow-skills/scripts/rfpeptides/rfpeptides_viz.py <results_dir>
+
+# Generate a single merged 2x3 summary figure
+python workflow-skills/scripts/rfpeptides/rfpeptides_viz.py <results_dir> --merged
+
+# Custom output prefix
+python workflow-skills/scripts/rfpeptides/rfpeptides_viz.py <results_dir> --output results/my_prefix
+```
+
+**Example:**
+
+```bash
+python workflow-skills/scripts/rfpeptides/rfpeptides_viz.py results/case2_RbtA_v2/prod_pipeline --merged
+```
+
+### Generated Figures
+
+| Panel | Title | Type | Description |
+|-------|-------|------|-------------|
+| 1 | Binding Energy (ddG) | Bar chart | Designs sorted by ddG (more negative = better), thresholds at -30/-50 |
+| 2 | Interface iPAE | Bar chart | Sorted ascending (lower = better), thresholds at 0.15/0.20 |
+| 3 | Quality Scatter | Scatter plot | ddG vs iPAE, colored by composite score, "good zone" shaded |
+| 4 | Design Ranking | Horizontal bar | Composite score ranking, colored by pass/fail |
+| 5 | Metrics Table | Table | Top designs with ddG, iPAE, pLDDT, SAP, CMS, pass/fail |
+| 6 | Execution Timeline | Gantt chart | 5 pipeline stages from pipeline.log timestamps |
+
+### Composite Score Formula
+
+Designs are ranked by a weighted composite score (0-1, higher = better):
+
+```
+Score = 0.3 * ddG_norm + 0.25 * iPAE_norm + 0.2 * pLDDT_norm + 0.15 * CMS_norm + 0.1 * SAP_norm
+```
+
+All metrics are normalized to 0-1; ddG/iPAE/SAP are inverted since lower values are better.
+
+### Programmatic Access
+
+For Jupyter notebooks or scripts, use the `display_results()` function:
+
+```python
+from workflow_skills.scripts.rfpeptides.rfpeptides_viz import display_results
+
+# Display figures inline (notebook) or in GUI window (terminal)
+figures = display_results("results/case2_RbtA_v2/prod_pipeline")
+```
+
+---
+
 ## Quality Thresholds Reference Table
 
 | Metric | Excellent | Good | Acceptable | Description |
