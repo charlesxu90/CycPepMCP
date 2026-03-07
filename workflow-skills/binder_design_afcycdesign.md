@@ -125,6 +125,38 @@ Read the output PDB file to extract the designed binder sequence and quality met
 | iPTM | > 0.80 | > 0.60 | > 0.40 |
 | iPAE | < 0.11 | < 0.15 | < 0.20 |
 
+### Step 6: Visualize Results
+
+Generate publication-quality figures to compare and evaluate designs.
+
+**Script:** `workflow-skills/scripts/afcycdesign/afcycdesign_viz.py`
+
+**Usage:**
+```bash
+# Generate 6 separate figures
+python workflow-skills/scripts/afcycdesign/afcycdesign_viz.py <results_dir>
+
+# Generate merged 2x3 summary figure
+python workflow-skills/scripts/afcycdesign/afcycdesign_viz.py <results_dir> --merged
+
+# Custom output prefix
+python workflow-skills/scripts/afcycdesign/afcycdesign_viz.py <results_dir> --output my_prefix
+```
+
+**Input:** Auto-detects `afcycdesign_results.csv`, individual `*_afcyc.json` files, or `design_metrics.csv` in the results directory.
+
+**Generated Figures:**
+| Panel | Title | Description |
+|-------|-------|-------------|
+| 1 | pLDDT Scores | Bar chart sorted descending, thresholds at 0.70/0.50 |
+| 2 | Interface iPAE | Bar chart sorted ascending, thresholds at 0.15/0.20 |
+| 3 | Quality Scatter | pLDDT vs iPAE colored by composite score with "good zone" |
+| 4 | Design Ranking | Horizontal bar chart by composite score |
+| 5 | Metrics Table | Top designs: pLDDT, iPAE, iPTM, pTM, i_con |
+| 6 | iPTM Scores | Interface pTM bar chart, thresholds at 0.60/0.40 |
+
+**Composite Score:** `0.30 * pLDDT + 0.30 * iPAE_inv + 0.25 * iPTM + 0.15 * pTM`
+
 ## Output Format
 
 Present results in this format:
