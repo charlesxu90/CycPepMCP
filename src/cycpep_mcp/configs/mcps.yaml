@@ -83,6 +83,8 @@ mcps:
     - --gpus
     - all
     - --ipc=host
+    - -e
+    - TORCHINDUCTOR_CACHE_DIR=/tmp/torch_cache
     docker_image: ghcr.io/macronex/boltz_mcp:latest
     docker_volumes: []
     env_vars: {}

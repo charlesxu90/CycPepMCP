@@ -49,7 +49,7 @@ To avoid GPU memory conflicts and eliminate redundant model reloading, assign ea
 
 ### Input Requirements
 - Target protein PDB file (properly formatted) or target protein sequence
-- Prior model file (`.pt`) for HELM-GPT (pre-trained on ChEMBL/CycPeptMPDB with permeability optimization)
+- Prior model file (`.pt`) for HELM-GPT — default: `examples/data/models/prior/perm_agent_final.pt` (permeability-pretrained, vocab=76, n_embd=256, 8-layer GPT). Requires matching `.json` config file at same path.
 - Boltz-2 scoring server running and accessible (on dedicated GPU)
 - Desired binder length (typically 7-20 residues)
 
@@ -115,7 +115,7 @@ Start from the permeability-pretrained prior and optimize with multi-objective r
 **Parameters:**
 | Parameter | Recommended | Description |
 |-----------|-------------|-------------|
-| `prior_model` | (required) | Path to permeability-pretrained prior `.pt` file |
+| `prior_model` | Default: `examples/data/models/prior/perm_agent_final.pt` | Path to permeability-pretrained prior `.pt` file (must have matching `.json` config) |
 | `task` | `"kras_perm"` | Multi-objective task. Options: `"permeability"`, `"kras_kd"`, `"kras_perm"` |
 | `output_dir` | (required) | Directory for results, checkpoints, generated sequences |
 | `agent_model` | null | Optional path to existing agent model for continued training |
