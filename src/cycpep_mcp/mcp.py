@@ -948,6 +948,14 @@ class MCP:
         cmd.extend(["-v", f"{cwd}:{cwd}"])
 
         for vol in self.docker_volumes:
+            # Resolve relative host paths (e.g. ./params) relative to MCP path
+            parts = vol.split(":")
+            if len(parts) >= 2 and self.path:
+                host_path = parts[0]
+                if host_path.startswith("./") or host_path.startswith("../"):
+                    mcp_dir = os.path.realpath(self.path)
+                    host_path = os.path.realpath(os.path.join(mcp_dir, host_path))
+                    vol = ":".join([host_path] + parts[1:])
             cmd.extend(["-v", vol])
 
         cmd.append(image)

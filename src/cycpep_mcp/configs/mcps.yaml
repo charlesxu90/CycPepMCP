@@ -24,7 +24,8 @@ mcps:
     - all
     - --ipc=host
     docker_image: ghcr.io/macronex/afcycdesign_mcp:latest
-    docker_volumes: []
+    docker_volumes:
+    - ./params:/app/params:ro
     env_vars: {}
     path: tool-mcps/afcycdesign_mcp
     python_version: '3.10'
