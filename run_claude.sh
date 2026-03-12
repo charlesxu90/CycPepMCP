@@ -56,6 +56,9 @@ cpmcp create --github-url https://github.com/ccsb-scripps/AutoDock-CrankPep --mc
 # HADDOCK3 - Information-driven docking for cyclic peptides
 cpmcp create --github-url https://github.com/haddocking/haddock3 --mcp-dir tool-mcps/haddock3_mcp --use-case-filter 'cyclic peptide docking using HADDOCK, information-driven docking protocol, protein-peptide interactions'
 
+# gnina - CNN-augmented molecular docking and scoring
+cpmcp create --github-url https://github.com/gnina/gnina --mcp-dir tool-mcps/gnina_mcp --use-case-filter 'protein-ligand docking and pose scoring using gnina, CNN rescoring, binding affinity estimation for virtual screening'
+
 # ==============================================================================
 # CLASSICAL MODELING - P0
 # ==============================================================================

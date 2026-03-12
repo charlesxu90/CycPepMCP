@@ -24,8 +24,10 @@ mcps:
     - all
     - --ipc=host
     docker_image: ghcr.io/macronex/afcycdesign_mcp:latest
-    docker_volumes:
-    - ./params:/app/params:ro
+    docker_volumes: []
+    cache_model:
+      subpath: afcycdesign
+      mount: /app/params:ro
     env_vars: {}
     path: tool-mcps/afcycdesign_mcp
     python_version: '3.10'
@@ -46,6 +48,12 @@ mcps:
     - --ipc=host
     docker_image: ghcr.io/macronex/alphafold3_mcp:latest
     docker_volumes: []
+    cache_data:
+      subpath: af3_db
+      mount: /app/repo/alphafold3/alphafold3_db
+    cache_model:
+      subpath: alphafold3/model
+      mount: /app/repo/alphafold3/model
     env_vars: {}
     path: tool-mcps/alphafold3_mcp
     python_version: '3.11'
@@ -83,10 +91,11 @@ mcps:
     - --gpus
     - all
     - --ipc=host
-    - -e
-    - TORCHINDUCTOR_CACHE_DIR=/tmp/torch_cache
-    docker_image: ghcr.io/macronex/boltz_mcp:latest
+    docker_image: boltz_mcp:latest
     docker_volumes: []
+    cache_model:
+      subpath: boltz
+      mount: /opt/boltz_cache
     env_vars: {}
     path: tool-mcps/boltz_mcp
     python_version: '3.10'
@@ -201,6 +210,23 @@ mcps:
     setup_script: quick_setup.sh
     source: Tool
     url: https://github.com/akiyamalab/cycpeptmp
+  gnina_mcp:
+    dependencies: []
+    description: '> CNN-enhanced molecular docking using Gnina - MCP tools for protein-ligand
+      docking, binding affinit...'
+    docker_args: []
+    docker_volumes: []
+    env_vars: {}
+    path: tool-mcps/gnina_mcp
+    python_version: '3.10'
+    runtime: python
+    server_args:
+    - src/server.py
+    server_command: python
+    setup_commands: []
+    setup_script: quick_setup.sh
+    source: Tool
+    url: https://github.com/gnina/gnina
   gromacs_mcp:
     dependencies: []
     description: GROMACS molecular dynamics simulations
@@ -266,6 +292,12 @@ mcps:
     - --ipc=host
     docker_image: ghcr.io/macronex/highfold3_mcp:latest
     docker_volumes: []
+    cache_data:
+      subpath: af3_db
+      mount: /app/repo/alphafold3/alphafold3_db
+    cache_model:
+      subpath: alphafold3/model
+      mount: /app/repo/alphafold3/model
     env_vars: {}
     path: tool-mcps/highfold3_mcp
     python_version: '3.12'

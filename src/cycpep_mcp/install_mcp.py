@@ -21,7 +21,7 @@ Usage:
 """
 
 from .mcp_manager import MCPManager
-from .mcp import MCPStatus
+from .mcp import MCPStatus, get_cache_data_dir, get_cache_model_dir
 
 
 # =============================================================================
@@ -269,6 +269,15 @@ def show_info(mcp_name: str) -> None:
 
     if mcp.dependencies:
         print(f"  Dependencies: {', '.join(mcp.dependencies)}")
+
+    if mcp.cache_data.get("subpath"):
+        print(f"  Cache Data Path: {get_cache_data_dir(mcp.cache_data['subpath'])}")
+        if mcp.cache_data.get("mount"):
+            print(f"  Cache Data Mount: {mcp.cache_data['mount']}")
+    if mcp.cache_model.get("subpath"):
+        print(f"  Cache Model Path: {get_cache_model_dir(mcp.cache_model['subpath'])}")
+        if mcp.cache_model.get("mount"):
+            print(f"  Cache Model Mount: {mcp.cache_model['mount']}")
 
     if mcp.setup_commands:
         print(f"  Setup Commands (legacy):")

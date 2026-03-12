@@ -3,6 +3,7 @@
 MCP Class - Represents a single MCP server with installation and registration operations
 """
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -39,6 +40,26 @@ def resolve_path(path_str: str) -> Path:
     if path.is_absolute():
         return path
     return (PROJECT_ROOT / path).resolve()
+
+
+DEFAULT_CACHE_ROOT = os.path.expanduser("~/.macromnex/cache")
+
+
+def get_cache_root() -> Path:
+    """Get the MACROMNEX_CACHE root directory."""
+    return Path(os.environ.get("MACROMNEX_CACHE", DEFAULT_CACHE_ROOT))
+
+
+def get_cache_data_dir(subpath: str = "") -> Path:
+    """Get cache data directory, optionally with MCP-specific subpath."""
+    base = get_cache_root() / "data"
+    return base / subpath if subpath else base
+
+
+def get_cache_model_dir(subpath: str = "") -> Path:
+    """Get cache model directory, optionally with MCP-specific subpath."""
+    base = get_cache_root() / "model"
+    return base / subpath if subpath else base
 
 
 def make_relative_path(abs_path: str) -> str:
@@ -131,6 +152,8 @@ class MCP:
     docker_image: Optional[str] = None
     docker_args: List[str] = field(default_factory=list)
     docker_volumes: List[str] = field(default_factory=list)
+    cache_data: Dict[str, str] = field(default_factory=dict)   # {"subpath": "af3_db", "mount": "/data/af3_db"}
+    cache_model: Dict[str, str] = field(default_factory=dict)  # {"subpath": "boltz", "mount": "/opt/boltz_cache"}
 
     def __post_init__(self):
         """Validate and normalize runtime type"""
@@ -317,11 +340,17 @@ class MCP:
 
         # Docker-based MCPs: prefer local image, fall back to GHCR pull
         if self.runtime == MCPRuntime.DOCKER.value:
-            return self._pull_docker_image(capture_output=capture_output)
+            result = self._pull_docker_image(capture_output=capture_output)
+            if result:
+                self._ensure_cache_dirs()
+            return result
 
         # UV-based MCPs: create venv with uv and install deps
         if self.runtime == MCPRuntime.UV.value:
-            return self._install_uv(capture_output=capture_output)
+            result = self._install_uv(capture_output=capture_output)
+            if result:
+                self._ensure_cache_dirs()
+            return result
 
         # Handle local tool MCPs (check if already present in tool-mcps directory)
         if self.path:
@@ -333,7 +362,10 @@ class MCP:
                 self.invalidate_status_cache()
 
                 # Run setup: prefer quick_setup.sh, fall back to setup_commands
-                return self._run_setup(skip_env=skip_env, skip_repo=skip_repo)
+                result = self._run_setup(skip_env=skip_env, skip_repo=skip_repo)
+                if result:
+                    self._ensure_cache_dirs()
+                return result
 
             # If local path doesn't exist but URL is provided, fall through to clone
             elif self.url:
@@ -391,7 +423,10 @@ class MCP:
             self.invalidate_status_cache()
 
             # Run setup: prefer quick_setup.sh, fall back to setup_commands
-            return self._run_setup(skip_env=skip_env, skip_repo=True)  # skip_repo since we just cloned
+            result = self._run_setup(skip_env=skip_env, skip_repo=True)  # skip_repo since we just cloned
+            if result:
+                self._ensure_cache_dirs()
+            return result
 
         except FileNotFoundError:
             print("Git not found. Please install git first.")
@@ -650,6 +685,31 @@ class MCP:
     # Helper Methods
     # -------------------------------------------------------------------------
 
+    def _get_cache_volumes(self) -> List[str]:
+        """Generate Docker volume mount strings for cache directories."""
+        volumes = []
+        if self.cache_data.get("subpath") and self.cache_data.get("mount"):
+            host_path = str(get_cache_data_dir(self.cache_data["subpath"]))
+            volumes.append(f"{host_path}:{self.cache_data['mount']}")
+        if self.cache_model.get("subpath") and self.cache_model.get("mount"):
+            host_path = str(get_cache_model_dir(self.cache_model["subpath"]))
+            volumes.append(f"{host_path}:{self.cache_model['mount']}")
+        return volumes
+
+    def _get_cache_env_vars(self) -> Dict[str, str]:
+        """Get cache-related environment variables."""
+        env = {}
+        if self.cache_data.get("subpath") or self.cache_model.get("subpath"):
+            env["MACROMNEX_CACHE"] = str(get_cache_root())
+        return env
+
+    def _ensure_cache_dirs(self) -> None:
+        """Create cache directories for this MCP if configured."""
+        if self.cache_data.get("subpath"):
+            get_cache_data_dir(self.cache_data["subpath"]).mkdir(parents=True, exist_ok=True)
+        if self.cache_model.get("subpath"):
+            get_cache_model_dir(self.cache_model["subpath"]).mkdir(parents=True, exist_ok=True)
+
     def _get_clean_name(self) -> str:
         """Get cleaned name for CLI registration"""
         return self.name.replace("/", "_").replace("-", "_")
@@ -762,6 +822,8 @@ class MCP:
         cmd = [cli, "mcp", "add", clean_name]
 
         for key, value in self.env_vars.items():
+            cmd.extend(["--env", f"{key}={value}"])
+        for key, value in self._get_cache_env_vars().items():
             cmd.extend(["--env", f"{key}={value}"])
 
         cmd.append("--")
@@ -958,6 +1020,12 @@ class MCP:
                     vol = ":".join([host_path] + parts[1:])
             cmd.extend(["-v", vol])
 
+        # Auto-mount cache directories
+        for vol in self._get_cache_volumes():
+            host_path = vol.split(":")[0]
+            os.makedirs(host_path, exist_ok=True)
+            cmd.extend(["-v", vol])
+
         cmd.append(image)
 
         return self._run_register_command(cmd, cli, clean_name)
@@ -973,6 +1041,8 @@ class MCP:
         cmd = [cli, "mcp", "add", clean_name]
 
         for key, value in self.env_vars.items():
+            cmd.extend(["--env", f"{key}={value}"])
+        for key, value in self._get_cache_env_vars().items():
             cmd.extend(["--env", f"{key}={value}"])
 
         cmd.append("--")

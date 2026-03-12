@@ -1,10 +1,10 @@
 # HELM-GPT Generative-to-Physics Binder Design Workflow
 
-> Cyclic peptide binder design integrating HELM-GPT generative optimization with Boltz-2 structural feedback and Rosetta physics-based validation
+> Cyclic peptide binder design integrating HELM-GPT generative optimization with Boltz-2 structural feedback, HighFold3 + Gnina docking validation, and MD simulation final evaluation
 
 ## Overview
 
-This skill implements a two-phase "Generative-to-Physics" pipeline for designing synthesizable macrocyclic peptide binders. The workflow uses HELM-GPT as the generative engine with a multi-objective RL loop that incorporates Boltz-2 complex structure prediction metrics (iPAE, iPTM) and permeability scoring as real-time rewards, followed by Rosetta physics-based filtering for final candidate selection.
+This skill implements a three-phase pipeline for designing synthesizable macrocyclic peptide binders. The workflow uses HELM-GPT as the generative engine with a multi-objective RL loop that incorporates Boltz-2 complex structure prediction metrics (iPAE, iPTM) and permeability scoring as real-time rewards, followed by HighFold3 structure prediction + Gnina docking for binding validation, and MD simulations for final evaluation.
 
 **Key Design Choices:**
 - The prior model is already pre-trained with permeability optimization (no separate permeability step needed)
@@ -21,8 +21,15 @@ PHASE 1: RL-Guided Generation with DL Feedback (HELM-GPT + Boltz-2)
                        → HELM→amino acid sequence → Boltz-2 complex prediction → iPAE, iPTM
                        → combined reward → update GPT model
     ↓
-PHASE 2: Physics-Based Validation & Final Selection (Rosetta)
-    FastRelax with PeptideCyclizeMover → ddG, SAP, CMS filtering → ranking
+PHASE 1b: Boltz-2 SMILES Affinity Prediction
+    HELM→SMILES → Boltz-2 affinity prediction (peptide as small molecule ligand)
+    → 3-head ensemble affinity + confidence metrics → ensemble consensus filtering
+    ↓
+PHASE 2: Structure Prediction & Docking Validation (HighFold3 + Gnina)
+    HighFold3 cyclic peptide structure prediction (CycPOEM) → Gnina docking against target → filtering
+    ↓
+PHASE 3: MD Simulation Final Evaluation
+    MD simulations of top binders → binding stability, RMSD, interaction analysis → final selection
 ```
 
 ## Prerequisites
@@ -30,9 +37,11 @@ PHASE 2: Physics-Based Validation & Final Selection (Rosetta)
 ### Required MCP Servers
 | MCP Server | Purpose | Phase(s) |
 |------------|---------|----------|
-| `helmgpt_mcp` | Sequence generation, RL optimization, permeability scoring, Boltz-2 server scoring | 1 |
-| `boltz_mcp` | Complex structure prediction (iPAE, iPTM) — accessed via `helmgpt_mcp` `score_with_server` (scorer_type="boltz2"), or directly for standalone prediction | 1 |
-| `rosetta_kic_mcp` | Structure refinement, interface metrics (ddG, SAP, CMS) | 2 |
+| `helmgpt_mcp` | Sequence generation, RL optimization, permeability scoring, HELM→SMILES, Boltz-2 server scoring | 1, 1b |
+| `boltz_mcp` | Complex structure prediction (iPAE, iPTM) via protein-chain input; SMILES affinity prediction (3-head ensemble) via ligand input | 1, 1b |
+| `highfold3_mcp` | AlphaFold3-based cyclic peptide structure prediction with CycPOEM and Cyclization Switch | 2 |
+| `gnina_mcp` | CNN-based molecular docking scoring (Gnina/Vina) — **not yet implemented** | 2 |
+| `gromacs_mcp` / `amber_mcp` | MD simulations for binding stability evaluation | 3 |
 
 ### GPU Assignment Strategy
 
@@ -267,126 +276,233 @@ For each generated sequence:
         → DISCARD
 ```
 
-**Recommended:** Select top 20-50 candidates for Phase 2 Rosetta validation.
+**Recommended:** Select top 20-50 candidates for Phase 2 affinity validation.
 
 ---
 
-## Phase 2: Physics-Based Validation & Final Selection (Rosetta)
+## Phase 1b: Boltz-2 SMILES Affinity Prediction
 
-Top candidates from Phase 1 are subjected to Rosetta physics-based refinement and interface metric computation to identify the final designs for synthesis.
+After Phase 1 DL filtering (iPAE/iPTM from protein-chain input), candidates undergo Boltz-2 affinity prediction using **SMILES ligand input** to properly model non-canonical amino acid chemistry (N-methylation, D-amino acids, piperidine caps) that protein-chain input cannot represent.
 
-### Step 2.1: Rosetta FastRelax with PeptideCyclizeMover
+### Step 1b.1: Convert HELM to SMILES
 
-**Tool:** `mcp__rosetta_kic_mcp__submit_cycpep_fast_relax`
+**Tool:** `mcp__helmgpt_mcp__helm_to_smiles`
+
+**Purpose:** Convert HELM notation to SMILES, preserving ncAA chemistry (stereochemistry, N-methylation, D-amino acids, sidechain cyclization, piperidine caps).
+
+### Step 1b.2: Submit Boltz-2 Affinity Prediction (SMILES mode)
+
+**Tool:** `mcp__boltz_mcp__submit_affinity_prediction`
 
 **Parameters:**
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `input_file` | (required) | PDB file from Boltz-2 structure prediction |
-| `rounds` | 4 | Number of FastRelax rounds |
-| `xml` | null | Optional custom RosettaScripts XML |
-| `job_name` | null | Job identifier |
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `protein_sequence` | Target protein sequence | Full-length target (e.g., KRAS 165 aa) |
+| `ligand_smiles` | Cyclic peptide SMILES | From HELM→SMILES conversion (Step 1b.1) |
+| `use_msa_server` | true | MSA for better accuracy |
+| `output_format` | "pdb" | PDB output for downstream use |
+| `accelerator` | "gpu" | GPU acceleration |
 
-**Purpose:**
-1. Minimize the complex using the beta_nov16 score function
-2. Apply PeptideCyclizeMover before and after FastRelax to maintain the terminal peptide bond
-3. Peptide chain fully movable; target interface sidechains repack; non-interface residues frozen
-4. Resolve steric clashes from structure prediction
+> **Why SMILES input:** Boltz-2 protein-chain input treats the peptide as canonical amino acids, ignoring ncAA modifications. SMILES input treats the peptide as a small molecule ligand, preserving the exact chemistry (N-methylated backbone, D-stereochemistry, non-standard caps). This gives complementary affinity predictions.
 
-> **Note:** The input PDB should come from the Boltz-2 structure prediction output during Phase 1 scoring. Verify chain assignments before submission.
+> **MSA reuse:** For screening multiple peptides against the same target, compute MSA once and reuse via `msa_path` parameter (saves ~5-10 min per job).
 
-### Step 2.2: Monitor Relaxation
+### Step 1b.3: Collect Boltz-2 Ensemble Affinity Metrics
+
+Boltz-2 affinity prediction produces **three independent affinity prediction heads** (ensemble) plus confidence metrics:
+
+**Affinity Metrics (from `affinity_*.json`):**
+
+| Metric | Description | Interpretation |
+|--------|-------------|----------------|
+| `affinity_pred_value` | Primary affinity prediction (pKd-like) | Higher = stronger binding |
+| `affinity_probability_binary` | Primary binding probability (0-1) | > 0.5 = likely binder |
+| `affinity_pred_value1` | Secondary affinity head prediction | Higher = stronger binding |
+| `affinity_probability_binary1` | Secondary binding probability | Ensemble consistency check |
+| `affinity_pred_value2` | Tertiary affinity head prediction | Higher = stronger binding |
+| `affinity_probability_binary2` | Tertiary binding probability | Ensemble consistency check |
+
+**Confidence Metrics (from `confidence_*.json`):**
+
+| Metric | Description | Interpretation |
+|--------|-------------|----------------|
+| `confidence_score` | Overall model confidence | Higher is better |
+| `iptm` / `ligand_iptm` | Interface predicted TM-score | Higher = better complex |
+| `ptm` | Predicted TM-score | Higher = better fold |
+| `complex_plddt` | Complex per-residue confidence | Higher is better |
+| `complex_iplddt` | Interface per-residue confidence | Higher = better interface |
+| `complex_ipde` | Interface predicted distance error | Lower = more accurate |
+
+### Step 1b.4: Ensemble Affinity Filtering
+
+Use consensus across the three affinity heads for robust filtering:
+
+```
+For each candidate:
+    # Ensemble affinity consensus
+    avg_affinity = mean(affinity_pred_value, affinity_pred_value1, affinity_pred_value2)
+    avg_prob = mean(affinity_probability_binary, affinity_probability_binary1, affinity_probability_binary2)
+    n_heads_positive = count(head > 0 for head in [pred_value, pred_value1, pred_value2])
+
+    IF avg_prob > 0.5 AND n_heads_positive >= 2 AND ligand_iptm > 0.70:
+        → HIGH CONFIDENCE BINDER: Proceed to Phase 2
+    ELSE IF avg_prob > 0.4 AND n_heads_positive >= 1 AND ligand_iptm > 0.60:
+        → MARGINAL: Consider for Phase 2
+    ELSE:
+        → DISCARD: Weak predicted affinity
+```
+
+**Recommended:** Select top 10-30 candidates for Phase 2 structure prediction & docking.
+
+---
+
+## Phase 2: Structure Prediction & Docking Validation (HighFold3 + Gnina)
+
+Top candidates from Phase 1b are subjected to HighFold3 cyclic peptide structure prediction and Gnina docking scoring for independent binding validation.
+
+### Step 2.1: HighFold3 Cyclic Peptide Structure Prediction
+
+**Tool:** `mcp__highfold3_mcp__submit_cyclic_peptide_prediction`
+
+Predicts the 3D structure of each cyclic peptide candidate using AlphaFold3-based HighFold3 with **CycPOEM** (Cyclic Position Offset Encoding Matrix) and **Cyclization Switch** for head-to-tail cyclization modeling.
+
+**Parameters:**
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `sequence` | Amino acid sequence | One-letter codes (e.g., "AVVFLAD") |
+| `output_dir` | (optional) | Custom output directory |
+| `name` | (optional) | Name for the prediction |
+| `config` | (optional) | Custom config file path |
+| `job_name` | (optional) | Job tracking name |
+
+**Runtime:** 15-60 minutes per peptide
+
+> **Note on complex prediction:** HighFold3 also provides `submit_cyclic_peptide_protein_complex_prediction` for peptide-protein complexes, but currently supports limited protein types (PDZ_domain, SH3_domain, WW_domain). For arbitrary targets like KRAS, use `submit_cyclic_peptide_prediction` for peptide structure, then Gnina docking against the target PDB.
+
+**Batch submission:**
+For multiple candidates, use `mcp__highfold3_mcp__submit_batch_peptide_prediction` (max 20 per batch):
+```
+sequences = ["AVVFLAD", "AGFFLVLLGVF", "ATFFILLD", ...]
+prediction_type = "cyclic"
+```
+
+### Step 2.2: Monitor HighFold3 Jobs
 
 **Tools:**
-- `mcp__rosetta_kic_mcp__get_job_status`
-- `mcp__rosetta_kic_mcp__get_job_log`
+- `mcp__highfold3_mcp__get_job_status` — Check progress with elapsed time and ETA
+- `mcp__highfold3_mcp__get_job_log` — View execution logs
+- `mcp__highfold3_mcp__list_jobs` — List all submitted jobs
 
-### Step 2.3: Compute Interface Metrics (ddG, SAP, CMS)
+### Step 2.3: Gnina Docking Scoring
 
-**Tool:** `mcp__rosetta_kic_mcp__submit_interface_metrics`
+**Tool:** `gnina_mcp` (TODO: MCP not yet implemented — see below for planned interface)
 
-**Parameters:**
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `input_files` | (required) | List of relaxed PDB file paths |
-| `peptide_chain` | "A" | Peptide chain ID in PDB |
-| `ddg_threshold` | -40.0 | ddG filter (more negative = better) |
-| `sap_threshold` | 35.0 | SAP filter (lower = better) |
-| `cms_threshold` | 300.0 | CMS filter in Angstroms squared (higher = better) |
-| `job_name` | null | Job identifier |
+**Purpose:**
+1. Dock HighFold3-predicted cyclic peptide structures against target protein PDB
+2. Score binding poses using Gnina's CNN scoring function (trained on PDBBind)
+3. Provides physics-informed binding affinity estimates complementary to DL predictions
 
-> **Chain Convention:** Verify the chain assignment from Boltz-2 output. Adjust `peptide_chain` if Boltz-2 places the peptide on a chain other than A.
+**Planned Parameters:**
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `receptor_pdb` | Target PDB file | KRAS or other target protein |
+| `ligand_pdb` | Peptide PDB from HighFold3 | Cyclic peptide structure |
+| `exhaustiveness` | 8-32 | Search thoroughness |
+| `num_modes` | 9 | Number of binding modes to generate |
+| `cnn_scoring` | "rescore" | Use CNN for rescoring Vina poses |
 
-### Step 2.4: Retrieve and Evaluate Metrics
+**Expected Output Metrics:**
+| Metric | Description | Direction |
+|--------|-------------|-----------|
+| CNN score | Gnina CNN binding score | Higher = better |
+| CNN affinity (pKd) | Predicted -log(Kd) | Higher = stronger binding |
+| Vina score (kcal/mol) | AutoDock Vina energy | More negative = better |
 
-**Tool:** `mcp__rosetta_kic_mcp__get_job_result`
+> **Gnina MCP Status:** Not yet implemented. To proceed without Gnina, use Boltz-2 ensemble affinity + HighFold3 confidence as Phase 2 filters. Gnina can be added later as an additional orthogonal validation.
 
-**Output:**
-- Per-structure ddG, SAP, CMS values
-- Pass/fail status per structure
-- CSV with all metrics
-
-#### Metric Descriptions
-
-**ddG (Interface Binding Energy)**
-- Rosetta ddG via InterfaceAnalyzer protocol
-- **Thresholds:**
-  - Excellent: ddG < -50 REU
-  - Good: ddG < -30 REU
-  - Acceptable: ddG < -20 REU
-
-**SAP (Spatial Aggregation Propensity)**
-- Measures surface hydrophobicity / aggregation risk
-- **Threshold:** SAP < 35
-- Lower = better solubility, less aggregation
-
-**CMS (Contact Molecular Surface)**
-- Interface contact surface area
-- **Threshold:** CMS > 300 Angstroms squared
-- Higher = more extensive binding interface
-
-### Step 2.5: Final Filtering & Ranking
+### Step 2.4: Phase 2 Filtering & Ranking
 
 ```
-For each relaxed design:
-    IF ddG < -30 AND SAP < 35 AND CMS > 300:
-        → HIGH PRIORITY: Strong predicted binder for synthesis
-    ELSE IF ddG < -20 AND SAP < 45 AND CMS > 200:
-        → MEDIUM PRIORITY: Acceptable candidate
-    ELSE:
-        → LOW PRIORITY: Discard or redesign
+For each candidate:
+    # HighFold3 structure quality
+    IF HighFold3 pLDDT > 0.70:
+        → Structure is reliable for docking
+
+    # Gnina docking (when available)
+    IF CNN_affinity > 6.0 (pKd) AND Vina_score < -7.0 kcal/mol:
+        → HIGH PRIORITY: Strong docking hit
+    ELSE IF CNN_affinity > 5.0 AND Vina_score < -5.0:
+        → MEDIUM PRIORITY: Moderate docking hit
+
+    # Combined ensemble filter (Boltz-2 affinity + HighFold3 + Gnina)
+    Rank by: ensemble_affinity_score × HighFold3_confidence × Gnina_CNN_score
 ```
+
+**Recommended:** Select top 5-15 candidates for Phase 3 MD evaluation.
+
+---
+
+## Phase 3: MD Simulation Final Evaluation
+
+Top candidates from Phase 2 are subjected to molecular dynamics simulations to evaluate binding stability and dynamics.
+
+### Step 3.1: System Preparation & MD Simulation
+
+**Tool:** `mcp__gromacs_mcp__submit_*` or `mcp__amber_mcp__submit_*` (TODO: confirm tool names)
+
+**Purpose:**
+1. Prepare peptide-target complex for MD (solvation, ion addition, energy minimization)
+2. Run production MD (recommended: 100-500 ns) to assess binding stability
+3. Evaluate RMSD, interaction persistence, binding free energy estimates
+
+### Step 3.2: MD Analysis & Final Selection
+
+**Evaluation Criteria:**
+- **Binding stability:** Peptide RMSD relative to initial binding pose (< 3 Å = stable)
+- **Interaction persistence:** Key hydrogen bonds and contacts maintained > 80% of trajectory
+- **Binding free energy:** MM-PBSA or MM-GBSA estimates (more negative = better)
+- **Conformational sampling:** Peptide maintains cyclic conformation throughout simulation
 
 ### Combined Ranking
 
-Rank final candidates using a composite score across both phases:
+Rank final candidates using a composite score across all phases:
 
-| Metric | Weight | Source | Direction |
-|--------|--------|--------|-----------|
-| ddG | 0.30 | Rosetta | Lower is better |
-| iPAE | 0.25 | Boltz-2 | Lower is better |
-| Permeability | 0.20 | HELM-GPT | Higher is better |
-| iPTM | 0.15 | Boltz-2 | Higher is better |
-| SAP | 0.10 | Rosetta | Lower is better |
+| Metric | Weight | Source | Phase | Direction |
+|--------|--------|--------|-------|-----------|
+| iPAE (protein input) | 0.10 | Boltz-2 | 1 | Lower is better |
+| iPTM (protein input) | 0.10 | Boltz-2 | 1 | Higher is better |
+| Permeability | 0.10 | HELM-GPT | 1 | Higher is better |
+| Ensemble avg affinity | 0.15 | Boltz-2 SMILES | 1b | Higher is better |
+| Ensemble avg prob | 0.10 | Boltz-2 SMILES | 1b | Higher is better |
+| Gnina CNN affinity | 0.15 | Gnina | 2 | Higher is better |
+| MD binding stability | 0.15 | GROMACS/Amber | 3 | Lower RMSD is better |
+| MM-PBSA ΔG | 0.15 | GROMACS/Amber | 3 | Lower is better |
 
 ### Selection Strategy
 - Select top 5-10 designs for experimental testing
 - Ensure structural diversity (different binding modes / ncAA compositions)
-- Prioritize designs passing all strict thresholds
+- Prioritize designs with stable MD trajectories and strong docking scores
 - Include 1-2 designs with novel ncAA scaffolds for chemical diversity
 
 ---
 
 ## Quality Thresholds Reference Table
 
-| Metric | Excellent | Good | Acceptable | Source |
-|--------|-----------|------|------------|--------|
-| Permeability | > -5.0 | > -6.0 | > -6.5 | HELM-GPT RF |
-| iPAE (ipae_scores) | < 0.20 | < 0.30 | < 0.40 | Boltz-2 |
-| iPTM (iptm_scores) | > 0.90 | > 0.80 | > 0.70 | Boltz-2 |
-| ddG | < -50 REU | < -30 REU | < -20 REU | Rosetta |
-| SAP | < 25 | < 35 | < 45 | Rosetta |
-| CMS | > 400 sq A | > 300 sq A | > 200 sq A | Rosetta |
+| Metric | Excellent | Good | Acceptable | Source | Phase |
+|--------|-----------|------|------------|--------|-------|
+| Permeability | > -5.0 | > -6.0 | > -6.5 | HELM-GPT RF | 1 |
+| iPAE (protein input) | < 0.20 | < 0.30 | < 0.40 | Boltz-2 | 1 |
+| iPTM (protein input) | > 0.90 | > 0.80 | > 0.70 | Boltz-2 | 1 |
+| Ensemble avg affinity | > 0.5 | > 0.0 | > -0.3 | Boltz-2 SMILES | 1b |
+| Ensemble avg prob | > 0.6 | > 0.5 | > 0.4 | Boltz-2 SMILES | 1b |
+| Ligand iPTM (SMILES) | > 0.80 | > 0.70 | > 0.60 | Boltz-2 SMILES | 1b |
+| Complex iPLDDT (SMILES) | > 0.70 | > 0.50 | > 0.35 | Boltz-2 SMILES | 1b |
+| Complex iPDE (SMILES) | < 1.5 | < 2.5 | < 3.5 | Boltz-2 SMILES | 1b |
+| HighFold3 pLDDT | > 0.85 | > 0.70 | > 0.60 | HighFold3 | 2 |
+| Gnina CNN affinity (pKd) | > 7.0 | > 6.0 | > 5.0 | Gnina | 2 |
+| Gnina Vina score | < -8.0 | < -7.0 | < -5.0 | Gnina | 2 |
+| MD peptide RMSD | < 2.0 Å | < 3.0 Å | < 5.0 Å | GROMACS/Amber | 3 |
+| MM-PBSA ΔG | < -30 | < -20 | < -10 | GROMACS/Amber | 3 |
 
 ---
 
@@ -406,7 +522,8 @@ Present final results in this format:
 | Loss Type | {loss_type} |
 | Sequences Generated | {total_generated} |
 | Phase 1 Passed | {phase1_passed} |
-| Phase 2 Passed | {phase2_passed} |
+| Phase 2 Passed (docking) | {phase2_passed} |
+| Phase 3 Passed (MD) | {phase3_passed} |
 
 ### Top Designs
 
@@ -415,11 +532,14 @@ Present final results in this format:
 |--------|-------|-----------|--------|
 | HELM | `{helm_sequence}` | - | - |
 | Permeability | {value} log cm/s | > -6.0 | PASS/FAIL |
-| iPAE | {value} | < 0.30 | PASS/FAIL |
-| iPTM | {value} | > 0.80 | PASS/FAIL |
-| ddG | {value} REU | < -30 | PASS/FAIL |
-| SAP | {value} | < 35 | PASS/FAIL |
-| CMS | {value} sq A | > 300 | PASS/FAIL |
+| iPAE (protein) | {value} | < 0.30 | PASS/FAIL |
+| iPTM (protein) | {value} | > 0.80 | PASS/FAIL |
+| Ensemble avg affinity | {value} | > 0.0 | PASS/FAIL |
+| Ensemble avg prob | {value} | > 0.5 | PASS/FAIL |
+| Ligand iPTM (SMILES) | {value} | > 0.70 | PASS/FAIL |
+| Gnina CNN affinity | {value} pKd | > 6.0 | PASS/FAIL |
+| MD RMSD | {value} Å | < 3.0 | PASS/FAIL |
+| MM-PBSA ΔG | {value} kcal/mol | < -20 | PASS/FAIL |
 
 **Contains ncAAs:** {yes/no}
 **Output File:** `{output_path}`
@@ -444,12 +564,22 @@ Present final results in this format:
 - **High iPAE across all designs:** Target may be challenging; consider different target region or longer peptide
 - **Low diversity / mode collapse:** Reduce `sigma` or increase `batch_size`
 
-### Phase 2: Rosetta Issues
-- **Poor ddG:** Interface may be unfavorable; consider longer peptide or different binding region
-- **High SAP:** Too many exposed hydrophobic residues; designs may be aggregation-prone
-- **Low CMS:** Insufficient contact surface; try longer binder length
-- **Relax crash:** Check for severe clashes in input PDB; reduce `rounds`
-- **Chain assignment mismatch:** Verify Boltz-2 output chain IDs match Rosetta `peptide_chain` parameter
+### Phase 1b: Boltz-2 SMILES Affinity Issues
+- **HELM→SMILES conversion failure:** Check HELM syntax; ensure cyclization link format is correct (`1:R1-N:R3`)
+- **All affinity heads negative:** Peptide may not bind as small molecule; check SMILES validity with RDKit
+- **Inconsistent ensemble heads:** Low confidence in prediction; rely more on protein-chain iPAE/iPTM
+- **MSA timeout:** Use pre-computed MSA via `msa_path` parameter for faster reruns
+
+### Phase 2: HighFold3 + Gnina Issues
+- **Low HighFold3 pLDDT:** Peptide structure may be poorly predicted; try different peptide lengths or check sequence
+- **HighFold3 complex prediction limited:** Only PDZ/SH3/WW domains supported for complex; use standalone cyclic peptide prediction + Gnina docking instead
+- **Poor docking score:** Binding pose may be unfavorable; consider alternative binding regions or increase `exhaustiveness`
+- **Gnina scoring failure:** Check ligand/receptor PDB formatting and chain assignments
+
+### Phase 3: MD Simulation Issues
+- **High RMSD drift:** Peptide dissociates during MD; binding pose unstable — discard candidate
+- **System preparation failure:** Check protonation states, missing atoms, or force field compatibility
+- **Simulation crash:** Reduce timestep, check for steric clashes, or extend equilibration
 
 ---
 
@@ -462,7 +592,8 @@ Design synthesizable cyclic peptide binders using HELM-GPT:
 - 1000 RL steps with reinvent_cpl loss
 - Boltz-2 complex prediction (protein sequence input) for iPAE, iPTM as RL rewards
 - Filter: permeability > -6.0, iPAE < 0.30, iPTM > 0.80
-- Validate top 30 with Rosetta ddG < -30, SAP < 35, CMS > 300
+- Validate top 30 with HighFold3 structure prediction + Gnina docking
+- Run MD simulations on top 10 for final binding stability evaluation
 ```
 
 ### ncAA-Enriched Design
@@ -470,7 +601,8 @@ Design synthesizable cyclic peptide binders using HELM-GPT:
 Design ncAA-containing cyclic peptide binders:
 - Use HELM-GPT with full 3104-monomer library
 - 500 RL steps with Boltz-2 structural feedback (protein sequence input)
-- Rank by composite score (ddG + iPAE + permeability)
+- HighFold3 + Gnina docking validation
+- MD simulation of top candidates
 - Select top 10 diverse designs for synthesis
 ```
 
@@ -480,7 +612,8 @@ Generate diverse binder candidates using HELM-GPT:
 - 2000 RL steps, batch_size=64
 - Boltz-2 iPAE + iPTM + permeability as rewards
 - Select top 50 by DL metrics
-- Apply Rosetta physics filters
+- HighFold3 + Gnina docking filtering
+- MD simulation of top 10-20
 - Cluster and select top 10 diverse designs
 ```
 
@@ -500,9 +633,14 @@ Generate diverse binder candidates using HELM-GPT:
 | 1 | helmgpt_mcp | `helm_to_smiles` | Convert HELM to SMILES |
 | 1 | helmgpt_mcp | `predict_permeability` | Permeability verification |
 | 1 | helmgpt_mcp | `score_with_server` (boltz2) | Boltz-2 iPAE/iPTM scoring (protein seq input) |
-| 2 | rosetta_kic_mcp | `submit_cycpep_fast_relax` | Structure relaxation |
-| 2 | rosetta_kic_mcp | `submit_interface_metrics` | ddG, SAP, CMS metrics |
-| 2 | rosetta_kic_mcp | `get_job_status` / `get_job_result` | Monitor & retrieve |
+| 1b | boltz_mcp | `submit_affinity_prediction` | SMILES affinity prediction (3-head ensemble) |
+| 1b | boltz_mcp | `get_job_status` / `get_job_result` | Monitor & retrieve affinity results |
+| 2 | highfold3_mcp | `submit_cyclic_peptide_prediction` | Cyclic peptide structure (CycPOEM) |
+| 2 | highfold3_mcp | `submit_batch_peptide_prediction` | Batch cyclic peptide structures |
+| 2 | gnina_mcp | (TODO — not yet implemented) | CNN docking scoring |
+| 2 | highfold3_mcp | `get_job_status` / `get_job_result` | Monitor & retrieve |
+| 3 | gromacs_mcp / amber_mcp | `submit_*` | MD simulation |
+| 3 | gromacs_mcp / amber_mcp | `get_job_status` / `get_job_result` | Monitor & retrieve |
 
 ---
 
@@ -517,8 +655,11 @@ Generate diverse binder candidates using HELM-GPT:
 | Synthesizability | Requires post-hoc check | Built-in via HELM library |
 | DL feedback | AfCycDesign reprediction (post-hoc) | Boltz-2 iPAE/iPTM (in-loop, protein seq input) |
 | Structural scoring | AfCycDesign iPAE | Boltz-2 iPAE + iPTM (complex prediction) |
-| Physics validation | Rosetta (same) | Rosetta (same) |
-| Workflow phases | 5 phases | 2 phases |
+| Affinity validation | - | Boltz-2 SMILES 3-head ensemble affinity |
+| Structure prediction | - | HighFold3 CycPOEM cyclic peptide structures |
+| Docking validation | - | Gnina CNN docking scoring |
+| Final evaluation | - | MD simulations (GROMACS/Amber) |
+| Workflow phases | 5 phases | 3 phases (1, 1b, 2, 3) |
 
 ---
 
@@ -530,7 +671,9 @@ Generate diverse binder candidates using HELM-GPT:
 ## References
 
 - HELM-GPT: GPT-based generative model for macrocyclic peptide design with HELM notation
-- Boltz-2: Biomolecular complex structure prediction (iPAE, iPTM — protein sequence input preferred over SMILES)
-- Rosetta: Macromolecular modeling suite with PeptideCyclizeMover
+- Boltz-2: Biomolecular complex structure prediction (iPAE, iPTM) and SMILES-based affinity prediction (3-head ensemble)
+- HighFold3: AlphaFold3-based structure prediction with CycPOEM cyclic positional encoding and Cyclization Switch
+- Gnina: CNN-based molecular docking with learned scoring functions (Vina + CNN)
+- GROMACS / Amber: Molecular dynamics simulation suites for binding stability evaluation
 - CycPeptMPDB: Cyclic peptide membrane permeability database
 - REINVENT + CPL: Reinforcement learning with contrastive preference learning for molecular optimization

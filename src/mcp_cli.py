@@ -222,6 +222,63 @@ def info_command(mcp_name: str):
     show_info(mcp_name)
 
 
+@cli.command(name="cache")
+def cache_command():
+    """
+    Show cache directory information.
+
+    Displays the MACROMNEX_CACHE root, data/model directories, env var status,
+    and lists MCP servers with configured cache subpaths.
+
+    Examples:
+
+      # Show cache info:
+      cpmcp cache
+
+      # Override cache root via env var:
+      MACROMNEX_CACHE=/data/cache cpmcp cache
+    """
+    import os
+    from .cycpep_mcp.mcp import get_cache_root, get_cache_data_dir, get_cache_model_dir
+    from .cycpep_mcp.install_mcp import mcp_manager
+
+    cache_root = get_cache_root()
+    env_val = os.environ.get("MACROMNEX_CACHE")
+
+    click.echo("\nCache Directory Configuration")
+    click.echo("=" * 60)
+    click.echo(f"  MACROMNEX_CACHE env var: {env_val or '(not set, using default)'}")
+    click.echo(f"  Cache root:  {cache_root}")
+    click.echo(f"  Data dir:    {get_cache_data_dir()}")
+    click.echo(f"  Model dir:   {get_cache_model_dir()}")
+    click.echo(f"  Root exists: {'Yes' if cache_root.exists() else 'No'}")
+
+    # List MCPs with cache config
+    local_mcps = mcp_manager.load_installed_mcps()
+    configured = []
+    for name, mcp in sorted(local_mcps.items()):
+        if mcp.cache_data.get("subpath") or mcp.cache_model.get("subpath"):
+            configured.append((name, mcp))
+
+    if configured:
+        click.echo(f"\nMCPs with cache configuration:")
+        click.echo("-" * 60)
+        for name, mcp in configured:
+            click.echo(f"  {name}:")
+            if mcp.cache_data.get("subpath"):
+                data_dir = get_cache_data_dir(mcp.cache_data["subpath"])
+                exists = data_dir.exists()
+                click.echo(f"    data:  {mcp.cache_data['subpath']} -> {mcp.cache_data.get('mount', '')} {'[exists]' if exists else '[missing]'}")
+            if mcp.cache_model.get("subpath"):
+                model_dir = get_cache_model_dir(mcp.cache_model["subpath"])
+                exists = model_dir.exists()
+                click.echo(f"    model: {mcp.cache_model['subpath']} -> {mcp.cache_model.get('mount', '')} {'[exists]' if exists else '[missing]'}")
+    else:
+        click.echo(f"\n  No MCPs have cache subpaths configured.")
+
+    click.echo()
+
+
 @cli.command(name="create")
 @click.option('--github-url', '-g', default='', help='GitHub repository URL to clone')
 @click.option('--local-repo-path', '-l', type=click.Path(exists=True, path_type=Path),

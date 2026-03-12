@@ -23,6 +23,7 @@ Each MCP server has its own setup: `cd tool-mcps/<mcp_name> && bash quick_setup.
 - `cpmcp install <name>` - Install and register MCP with Claude Code
 - `cpmcp status` - Show installed/registered MCPs
 - `cpmcp create -g <github_url> -d tool-mcps/<name>` - Auto-create MCP from a repo
+- `cpmcp cache` - Show cache directory info and configured MCP subpaths
 - `cpmcp sync` - Sync registry with filesystem
 - `cpskill avail` - List available workflow skills
 - `cpskill install <name>` - Install skill and its required MCPs
@@ -71,6 +72,25 @@ All GPU-intensive MCP servers (rfpeptides, proteinmpnn, rosetta_kic, afcycdesign
 ### Config Flow
 
 MCP registry (`src/cycpep_mcp/configs/mcps.yaml`) maps each MCP name to its path, runtime, server command, and setup script. `cpmcp install` runs `quick_setup.sh` then registers the server in Claude Code's `~/.claude.json`.
+
+## Centralized Cache System
+
+MCP data and model weights are stored under a single cache root controlled by the `MACROMNEX_CACHE` env var (default: `~/.macromnex/cache`).
+
+```
+$MACROMNEX_CACHE/          # default: ~/.macromnex/cache
+├── data/                  # databases, reference data (per-MCP subpaths)
+└── model/                 # ML model weights (per-MCP subpaths)
+    ├── boltz/
+    ├── afcycdesign/
+    └── ...
+```
+
+Per-MCP config in `mcps.yaml` uses nested dicts:
+- `cache_data: {subpath, mount}` - subpath under `data/` and container mount point
+- `cache_model: {subpath, mount}` - subpath under `model/` and container mount point
+
+Docker MCPs get cache dirs auto-mounted as volumes. Non-Docker MCPs (python, uv) receive the `MACROMNEX_CACHE` env var. Cache dirs are auto-created during `cpmcp install`. Use `cpmcp cache` to inspect.
 
 ## Chain Conventions (Critical)
 
