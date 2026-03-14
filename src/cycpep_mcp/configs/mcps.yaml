@@ -26,7 +26,7 @@ mcps:
     docker_image: ghcr.io/macronex/afcycdesign_mcp:latest
     docker_volumes: []
     cache_model:
-      subpath: afcycdesign
+      subpath: alphafold2/params
       mount: /app/params:ro
     env_vars: {}
     path: tool-mcps/afcycdesign_mcp
@@ -212,14 +212,16 @@ mcps:
     url: https://github.com/akiyamalab/cycpeptmp
   gnina_mcp:
     dependencies: []
-    description: '> CNN-enhanced molecular docking using Gnina - MCP tools for protein-ligand
-      docking, binding affinit...'
-    docker_args: []
+    description: CNN-enhanced molecular docking, scoring, and virtual screening using Gnina
+    docker_args:
+    - --gpus
+    - all
+    docker_image: ghcr.io/macronex/gnina_mcp:latest
     docker_volumes: []
     env_vars: {}
     path: tool-mcps/gnina_mcp
     python_version: '3.10'
-    runtime: python
+    runtime: docker
     server_args:
     - src/server.py
     server_command: python
@@ -271,6 +273,12 @@ mcps:
     - --ipc=host
     docker_image: ghcr.io/macronex/helm_gpt_mcp:latest
     docker_volumes: []
+    cache_data:
+      subpath: helmgpt_data
+      mount: /app/examples/data
+    cache_model:
+      subpath: helmgpt
+      mount: /app/models/helmgpt:ro
     env_vars: {}
     path: tool-mcps/helm_gpt_mcp
     python_version: '3.10'
