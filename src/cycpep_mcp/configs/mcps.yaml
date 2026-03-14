@@ -482,6 +482,9 @@ mcps:
     - --ipc=host
     docker_image: ghcr.io/macronex/rfpeptides_mcp:latest
     docker_volumes: []
+    cache_model:
+      subpath: rfpeptides/models
+      mount: /app/repo/RFdiffusion/models:ro
     env_vars: {}
     path: tool-mcps/rfpeptides_mcp
     python_version: '3.10'

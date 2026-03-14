@@ -1,85 +1,82 @@
-# HELM-GPT Generative-to-Physics Binder Design Workflow
+# HELM-GPT KRAS Binder Design Workflow
 
-> Cyclic peptide binder design integrating HELM-GPT generative optimization with Boltz-2 structural feedback, HighFold3 + Gnina docking validation, and MD simulation final evaluation
+> Cyclic peptide KRAS binder design using HELM-GPT RL co-optimization (permeability + KRAS binding), heavy-atom-routed structural evaluation (Boltz-2 / AlphaFold3 / Gnina), and composite scoring for final selection
 
 ## Overview
 
-This skill implements a three-phase pipeline for designing synthesizable macrocyclic peptide binders. The workflow uses HELM-GPT as the generative engine with a multi-objective RL loop that incorporates Boltz-2 complex structure prediction metrics (iPAE, iPTM) and permeability scoring as real-time rewards, followed by HighFold3 structure prediction + Gnina docking for binding validation, and MD simulations for final evaluation.
+This workflow implements a streamlined three-phase pipeline for designing synthesizable macrocyclic peptide binders against KRAS. HELM-GPT drives RL optimization using **fast local scoring models** (XGBoost KRAS binding + RF permeability) — no external Boltz-2 server needed during training. Candidates are then routed by heavy atom count for structural evaluation: small peptides (≤128 heavy atoms) get Boltz-2 SMILES affinity + AlphaFold3 + Gnina; larger peptides get AlphaFold3 + Gnina only.
 
 **Key Design Choices:**
-- The prior model is already pre-trained with permeability optimization (no separate permeability step needed)
-- Boltz-2 is used for **complex structure prediction** — supported scores: `ipae_scores`, `iptm_scores`, `affinity_pic50`, `complex_ipde_scores`
-- Boltz-2 input should be **protein sequences** (target + peptide), NOT SMILES — protein sequence input produces significantly better complex structures
-- iPAE and iPTM from Boltz-2 complex prediction are the primary RL feedback metrics
-- HELM-to-SMILES conversion is only needed for permeability scoring (RF model), not for Boltz-2
-- All Boltz-2 DL metrics feed directly back as RL rewards — no separate validation phase
+- RL rewards are fast local models (XGBoost + RF), not slow DL servers — 1 GPU sufficient for Phase 1
+- Heavy atom routing at 128 atoms: Boltz-2 SMILES affinity has a 128-atom ligand limit
+- AlphaFold3 runs for ALL candidates via `ligand_smiles` input (captures exact ncAA chemistry)
+- Gnina docking runs for ALL candidates on predicted complex structures
+- No MD simulation phase — structural evaluation is sufficient for candidate prioritization
 
 **Protocol Architecture:**
 ```
-PHASE 1: RL-Guided Generation with DL Feedback (HELM-GPT + Boltz-2)
-    HELM-GPT generates → HELM→SMILES → score permeability (RF model)
-                       → HELM→amino acid sequence → Boltz-2 complex prediction → iPAE, iPTM
+PHASE 1: RL Co-optimization (HELM-GPT kras_perm task)
+    HELM-GPT generates → XGBoost KRAS KD scoring (fast, local)
+                       → RF permeability scoring (fast, local)
                        → combined reward → update GPT model
     ↓
-PHASE 1b: Boltz-2 SMILES Affinity Prediction
-    HELM→SMILES → Boltz-2 affinity prediction (peptide as small molecule ligand)
-    → 3-head ensemble affinity + confidence metrics → ensemble consensus filtering
+POST-PHASE 1: Candidate Selection & Filtering
+    Validate HELM → HELM→SMILES → verify permeability (>-6.0) → verify KD (<10 μM)
+    → calculate heavy atom count → route candidates → cap at ≤100 for AF3
     ↓
-PHASE 2: Structure Prediction & Docking Validation (HighFold3 + Gnina)
-    HighFold3 cyclic peptide structure prediction (CycPOEM) → Gnina docking against target → filtering
+PHASE 2: Structural Evaluation (Two Parallel Tracks)
+    Track A (≤128 heavy atoms): Boltz-2 SMILES affinity → Gnina docking
+    Track B (ALL candidates):   AlphaFold3 complex prediction → Gnina docking
     ↓
-PHASE 3: MD Simulation Final Evaluation
-    MD simulations of top binders → binding stability, RMSD, interaction analysis → final selection
+PHASE 3: Final Selection & Ranking
+    Composite scoring (track-dependent weights) → top 5-10 designs
 ```
 
 ## Prerequisites
 
 ### Required MCP Servers
+
 | MCP Server | Purpose | Phase(s) |
 |------------|---------|----------|
-| `helmgpt_mcp` | Sequence generation, RL optimization, permeability scoring, HELM→SMILES, Boltz-2 server scoring | 1, 1b |
-| `boltz_mcp` | Complex structure prediction (iPAE, iPTM) via protein-chain input; SMILES affinity prediction (3-head ensemble) via ligand input | 1, 1b |
-| `highfold3_mcp` | AlphaFold3-based cyclic peptide structure prediction with CycPOEM and Cyclization Switch | 2 |
-| `gnina_mcp` | CNN-based molecular docking scoring (Gnina/Vina) — **not yet implemented** | 2 |
-| `gromacs_mcp` / `amber_mcp` | MD simulations for binding stability evaluation | 3 |
+| `helm_gpt_mcp` | RL optimization (`kras_perm`), permeability/KD scoring, HELM→SMILES conversion | 1, Post-1 |
+| `boltz_mcp` | SMILES affinity prediction (3-head ensemble), ligand SMILES validation | 2A |
+| `alphafold3_mcp` | Protein-ligand complex structure prediction | 2B |
+| `gnina_mcp` | CNN-based molecular docking scoring (Gnina + Vina) | 2A, 2B |
 
 ### GPU Assignment Strategy
 
-To avoid GPU memory conflicts and eliminate redundant model reloading, assign each compute-intensive service to a dedicated GPU:
+| GPU | Service | Phase | Notes |
+|-----|---------|-------|-------|
+| GPU 0 | HELM-GPT (RL optimization) | 1 | 1 GPU sufficient — scoring is local (XGBoost + RF) |
+| GPU 1 | Boltz-2 (SMILES affinity) | 2A | Only for ≤128 heavy atom candidates |
+| GPU 2 | AlphaFold3 (complex prediction) | 2B | All candidates; set `device=2` |
 
-| GPU | Service | Purpose | Notes |
-|-----|---------|---------|-------|
-| GPU 0 | HELM-GPT (RL optimization) | Sequence generation + permeability scoring | Start `helmgpt_mcp` server with `CUDA_VISIBLE_DEVICES=0` |
-| GPU 1 | Boltz-2 server | Complex structure prediction (iPAE, iPTM) | Start Boltz-2 scoring server with `CUDA_VISIBLE_DEVICES=1` |
-
-> **Why separate GPUs:** HELM-GPT RL training keeps the GPT model loaded continuously. Boltz-2 structure prediction is called for every batch as a scoring server. Running both on the same GPU causes OOM errors or forces repeated model unloading/reloading. Dedicated GPUs ensure both models stay resident in memory.
+> **Why 1 GPU for Phase 1:** Unlike the old workflow that required a dedicated Boltz-2 scoring server during RL, the `kras_perm` task uses fast local XGBoost and RF models. No external server needed.
 >
 > **Note:** The `device` parameter in `submit_optimize_peptides` only accepts `"auto"`, `"cpu"`, or `"cuda"` — NOT `"cuda:0"`. GPU selection must be done via `CUDA_VISIBLE_DEVICES` environment variable when starting the MCP server process.
 
 ### Input Requirements
-- Target protein PDB file (properly formatted) or target protein sequence
-- Prior model file (`.pt`) for HELM-GPT — default: `examples/data/models/prior/perm_agent_final.pt` (permeability-pretrained, vocab=76, n_embd=256, 8-layer GPT). Requires matching `.json` config file at same path.
-- Boltz-2 scoring server running and accessible (on dedicated GPU)
+
+- **KRAS target PDB file** — properly formatted protein structure
+- **KRAS protein sequence** — for Boltz-2 and AlphaFold3 input
+- **Pre-computed KRAS MSA** (`.a3m` file) — pre-computed A3M alignment of the KRAS target sequence. Providing this skips the slow MSA search step (~30-60 min) in both Boltz-2 and AlphaFold3, dramatically speeding up Phase 2. Generate once with MMseqs2 or the AF3 data pipeline.
+- **Prior model file** (`.pt`) — default: `examples/data/models/prior/perm_agent_final.pt` (permeability-pretrained, vocab=76, n_embd=256, 8-layer GPT). Requires matching `.json` config file at same path.
 - Desired binder length (typically 7-20 residues)
 
 ---
 
-## Phase 1: RL-Guided Generation with DL Feedback
+## Phase 1: RL Co-optimization (HELM-GPT `kras_perm`)
 
-HELM-GPT generates synthesizable macrocyclic peptides via reinforcement learning, using Boltz-2 structural metrics and permeability scores as combined rewards. The HELM monomer library (3,104+ monomers) naturally constrains all outputs to synthesizable chemical space, including non-canonical amino acids (ncAAs).
+HELM-GPT generates synthesizable macrocyclic peptides via reinforcement learning, using the `kras_perm` multi-objective task that co-optimizes KRAS binding affinity (XGBoost model) and membrane permeability (RF model). Both scoring models are fast and local — no external server needed.
 
 **RL Loop (each step):**
 ```
 1. HELM-GPT generates batch of HELM sequences
-2. Convert HELM → SMILES (for permeability scoring via RF model)
-3. Score permeability via RF model (fast, ~33 seq/s)
-4. Extract amino acid sequence from HELM → feed to Boltz-2 as protein sequence input
-5. Boltz-2 complex structure prediction (target + peptide as protein chains) → iPAE, iPTM
-6. Compute combined reward = f(permeability, iPAE, iPTM)
-7. Update GPT model via REINVENT + CPL loss
+2. Score KRAS binding via XGBoost model (fast, local) → KD in μM
+3. Score permeability via RF model (fast, local) → log cm/s
+4. Compute combined reward = f(KRAS_KD, permeability)
+5. Update GPT model via REINVENT + CPL loss
 ```
-
-> **Why protein sequence input for Boltz-2 (not SMILES):** Boltz-2 produces significantly better complex structures when both target and peptide are provided as protein sequences rather than treating the peptide as a SMILES ligand. This is because the protein sequence input leverages Boltz-2's full coevolutionary and structural modeling capabilities, including cyclic-offset positional encodings for head-to-tail cyclization.
 
 ### Step 1.1: Check Optimization Requirements
 
@@ -87,95 +84,79 @@ HELM-GPT generates synthesizable macrocyclic peptides via reinforcement learning
 
 **Expected Output:**
 - `repo_available`: HELM-GPT repository accessible
-- `permeability_model`: Permeability scoring model available
-- `kras_model`: KRAS scoring model available
+- `kras_model`: KRAS XGBoost scoring model available
+- `permeability_model`: Permeability RF scoring model available
 - `cuda_available`: GPU availability
 - `python_version`: Current Python version
 - `available_prior_models`: List of prior model `.pt` files
 
-**Action:** Ensure prior model, scoring models, and GPU are available before proceeding.
+**Action:** Ensure prior model, both scoring models (`kras_model` + `permeability_model`), and GPU are available before proceeding.
 
-### Step 1.2: Verify Boltz-2 Server Connectivity
-
-**Tool:** `mcp__helmgpt_mcp__get_server_scorer_info`
-
-**Expected Output:**
-- `available_scorers`: Should include `"boltz2"`
-- `boltz2.default_server`: Server URL and configuration
-- `boltz2.supported_scores`: iptm_scores, ipae_scores, affinity_pic50, complex_ipde_scores
-
-**Action:** Confirm Boltz-2 server is accessible. If not, configure `server_host` before proceeding.
-
-### Step 1.3: Review Available Optimization Tasks
+### Step 1.2: Review Available Optimization Tasks
 
 **Tool:** `mcp__helmgpt_mcp__get_optimization_tasks`
 
 **Expected Output:**
-- Available tasks and their scoring functions
-- Default parameters for each task
-- Loss function options: `reinvent`, `cpl`, `reinvent_cpl`
+- Available tasks including `kras_perm` (multi-objective KRAS + permeability)
+- Other options: `permeability`, `kras_kd`
+- Default parameters and loss function options
 
-### Step 1.4: Submit RL Optimization Job
+**Action:** Confirm `kras_perm` task is available. This is the recommended task for KRAS binder design as it co-optimizes both binding and permeability.
 
-Start from the permeability-pretrained prior and optimize with multi-objective reward that includes Boltz-2 structural feedback.
+### Step 1.3: Submit RL Optimization Job
 
 **Tool:** `mcp__helmgpt_mcp__submit_optimize_peptides`
 
 **Parameters:**
+
 | Parameter | Recommended | Description |
 |-----------|-------------|-------------|
 | `prior_model` | Default: `examples/data/models/prior/perm_agent_final.pt` | Path to permeability-pretrained prior `.pt` file (must have matching `.json` config) |
-| `task` | `"kras_perm"` | Multi-objective task. Options: `"permeability"`, `"kras_kd"`, `"kras_perm"` |
+| `task` | `"kras_perm"` | Multi-objective task: KRAS KD + permeability |
 | `output_dir` | (required) | Directory for results, checkpoints, generated sequences |
 | `agent_model` | null | Optional path to existing agent model for continued training |
-| `n_steps` | 500-1000 | RL optimization steps |
+| `n_steps` | 500 (max 1000) | RL steps. Start with 500; only increase to 1000 if reward has not converged |
 | `batch_size` | 32 | Sequences generated per step |
 | `sigma` | 60 | Augmented likelihood sigma |
 | `learning_rate` | 1e-4 | Learning rate for GPT update |
 | `loss_type` | `"reinvent_cpl"` | Combined REINVENT + CPL loss (recommended) |
 | `alpha` | 1.0 | Alpha weight for CPL component |
 | `max_len` | 140 | Maximum HELM sequence length |
-| `device` | `"cuda"` | Device for training. Options: `"auto"`, `"cpu"`, `"cuda"`. GPU selection via `CUDA_VISIBLE_DEVICES` env var (see GPU Assignment Strategy) |
+| `device` | `"cuda"` | Device for training. Options: `"auto"`, `"cpu"`, `"cuda"`. GPU selection via `CUDA_VISIBLE_DEVICES` env var |
 | `job_name` | null | Optional job tracking name |
 
 **RL Reward Components:**
 
-| Component | Source | Input Format | Metric | Weight Guidance |
-|-----------|--------|--------------|--------|-----------------|
-| Permeability | HELM-GPT RF model | SMILES (from HELM) | log cm/s (higher = better) | Maintain from prior |
-| Interface confidence | Boltz-2 complex prediction | Protein sequences | iPAE (lower = better) | Primary structural signal |
-| Interface quality | Boltz-2 complex prediction | Protein sequences | iPTM (higher = better) | Secondary structural signal |
+| Component | Source | Model Type | Metric | Target |
+|-----------|--------|------------|--------|--------|
+| KRAS binding | HELM-GPT local | XGBoost | KD (μM, lower = better) | < 10 μM |
+| Permeability | HELM-GPT local | Random Forest | log cm/s (higher = better) | > -6.0 |
 
-**Why iPAE and iPTM as primary Boltz-2 metrics:**
-- **iPAE** (ipae_scores) directly measures the confidence of the predicted peptide-target interface — the most relevant signal for binder design
-- **iPTM** (iptm_scores) measures interface predicted TM-score (0-1), assessing the overall quality of the predicted complex
-- Both are reliable outputs from Boltz-2 complex structure prediction when using protein sequence input
-- Additional available scores: `affinity_pic50` (predicted binding affinity), `complex_ipde_scores` (interface distance error)
+> **No Boltz-2 server params needed:** Unlike the old workflow, `kras_perm` uses local scoring models only. No `scorer_type`, `server_host`, or `target_scores` parameters.
 
 **Note on Contrastive Preference Learning (CPL):**
 CPL learns binary preferences between pairs of generated peptides within each batch, reducing the likelihood of low-scoring molecules more effectively than standard REINVENT alone.
 
-### Step 1.5: Monitor RL Training
+### Step 1.4: Monitor RL Training
 
 **Tools:**
-- `mcp__helmgpt_mcp__get_job_status` - Check job state
-- `mcp__helmgpt_mcp__get_job_log` - View training logs and reward progression
+- `mcp__helmgpt_mcp__get_job_status` — Check job state
+- `mcp__helmgpt_mcp__get_job_log` — View training logs and reward progression
 
 **Monitoring Strategy:**
 1. Check status every 30-60 seconds
 2. Watch for reward convergence in logs
 3. Monitor individual score components:
-   - Permeability scores (target: > -6.0 log cm/s)
-   - iPAE scores (target: < 0.30, lower is better)
-   - iPTM scores (target: > 0.80, higher is better)
+   - KRAS KD (target: < 10 μM, lower is better)
+   - Permeability (target: > -6.0 log cm/s, higher is better)
 4. Continue until `completed` or `failed`
 
 **Log Interpretation:**
 - Increasing average reward = optimization progressing
-- Plateau in reward = convergence (may stop early or increase `n_steps`)
+- Plateau in reward = convergence reached — 500 steps is often sufficient. Only extend to 1000 if reward is still improving
 - Decreasing diversity = mode collapse (reduce `sigma` or increase temperature)
 
-### Step 1.6: Retrieve Generated Sequences
+### Step 1.5: Retrieve Generated Sequences
 
 **Tool:** `mcp__helmgpt_mcp__get_job_result`
 
@@ -184,11 +165,13 @@ CPL learns binary preferences between pairs of generated peptides within each ba
 - Training logs with reward progression
 - Agent model checkpoint (for potential further optimization)
 
-### Step 1.7: Post-RL Quality Filtering
+---
 
-After RL completes, apply explicit filters to select top candidates for Phase 2.
+## Post-Phase 1: Candidate Selection & Filtering
 
-#### Step 1.7a: Validate HELM Notation
+Sequential filtering pipeline using `helm_gpt_mcp` local tools to select top candidates for structural evaluation.
+
+### Step P1.1: Validate HELM Notation
 
 **Tool:** `mcp__helmgpt_mcp__validate_helm_notation`
 
@@ -197,11 +180,12 @@ After RL completes, apply explicit filters to select top candidates for Phase 2.
 
 **Action:** Remove any sequences that fail HELM validation (rare with properly trained prior).
 
-#### Step 1.7b: Convert HELM to SMILES (batch)
+### Step P1.2: Convert HELM to SMILES
 
 **Tool:** `mcp__helmgpt_mcp__helm_to_smiles` (synchronous) or `mcp__helmgpt_mcp__submit_helm_to_smiles_batch` (async, for >1000 sequences)
 
 **Parameters:**
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `helm_input` | null | Single HELM string to convert (alternative to input_file) |
@@ -212,11 +196,12 @@ After RL completes, apply explicit filters to select top candidates for Phase 2.
 
 > Note: Either `helm_input` or `input_file` should be provided (mutually exclusive).
 
-#### Step 1.7c: Score Permeability (explicit verification)
+### Step P1.3: Score Permeability (explicit verification)
 
 **Tool:** `mcp__helmgpt_mcp__predict_permeability` (synchronous) or `mcp__helmgpt_mcp__submit_permeability_batch` (async, for >1000 sequences)
 
 **Parameters:**
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `helm_input` | null | Single HELM string to predict (alternative to input_file) |
@@ -230,88 +215,121 @@ After RL completes, apply explicit filters to select top candidates for Phase 2.
 
 **Threshold:** Permeability > -6.0 log cm/s
 
-#### Step 1.7d: Score with Boltz-2 (explicit verification)
+### Step P1.4: Score KRAS Binding (explicit verification)
 
-Use Boltz-2 complex structure prediction with **protein sequence input** (not SMILES) for both the target protein and the cyclic peptide. This produces significantly better complex structures.
-
-**Tool:** `mcp__helmgpt_mcp__score_with_server` (synchronous) or `mcp__helmgpt_mcp__submit_server_scoring` (async, for large batches)
+**Tool:** `mcp__helmgpt_mcp__predict_kras_binding` (synchronous) or `mcp__helmgpt_mcp__submit_kras_binding_batch` (async, for >1000 sequences)
 
 **Parameters:**
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| `helm_input` | null | Single HELM or amino acid sequence (alternative to input_file) |
-| `input_file` | null | CSV with amino acid sequences (extracted from HELM) |
-| `scorer_type` | `"boltz2"` | Use Boltz-2 complex structure prediction (default is `"rosetta"` — must set explicitly) |
-| `server_host` | null | Boltz-2 server URL (uses config default) |
-| `server_api` | null | API endpoint override (default: /biology/mit/boltz2/predict) |
-| `target_scores` | null | JSON string of score configurations, e.g. `'{"iptm_scores": {"weight": 1.0}, "ipae_scores": {"weight": 1.0}}'` |
-| `output_file` | null | Path to save scoring results |
-| `timeout` | 300 | Request timeout in seconds |
-| `include_raw_scores` | true | Include raw iPAE, iPTM scores |
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `helm_input` | null | Single HELM string to predict (alternative to input_file) |
+| `input_file` | null | CSV file with HELM sequences |
+| `output_file` | null | Path to save KRAS binding predictions |
+| `helm_column` | "HELM" | Column name in CSV |
 | `limit` | null | Maximum number of sequences to process |
 
-> **Important:** Feed the peptide as an amino acid sequence (protein chain), NOT as SMILES. The target protein and peptide should both be provided as protein sequences to Boltz-2. This leverages Boltz-2's coevolutionary modeling and cyclic-offset positional encodings.
+**Output Fields:**
+- `binding_score`: Raw XGBoost binding score
+- `kd_value_um`: Predicted dissociation constant in μM
+- `interpretation`: Human-readable binding classification
 
-**Key Boltz-2 Metrics (from complex structure prediction):**
+**Threshold:** KD < 10 μM
 
-| Metric | Threshold | Description |
-|--------|-----------|-------------|
-| iPAE (ipae_scores) | < 0.30 | Interface predicted aligned error (primary, lower is better) |
-| iPTM (iptm_scores) | > 0.80 | Interface predicted TM-score (0-1, higher is better) |
-| affinity_pic50 | informational | Predicted binding affinity as pIC50 (higher is stronger) |
-| complex_ipde_scores | informational | Complex interface predicted distance error |
-
-### Step 1.8: Select Top Candidates
+### Step P1.5: Filter Candidates
 
 ```
 For each generated sequence:
     IF HELM valid
        AND permeability > -6.0 log cm/s
-       AND iPAE < 0.30
-       AND iPTM > 0.80:
+       AND KD < 10 μM:
         → PASS: Proceed to Phase 2
-    ELSE IF iPAE < 0.40 AND iPTM > 0.70:
+    ELSE IF permeability > -6.5 AND KD < 100 μM:
         → MARGINAL: Consider for Phase 2 with lower priority
     ELSE:
         → DISCARD
 ```
 
-**Recommended:** Select top 20-50 candidates for Phase 2 affinity validation.
+### Step P1.6: Calculate Heavy Atom Count & Route Candidates
+
+Use `mcp__boltz_mcp__validate_ligand_smiles` to determine heavy atom count for each candidate's SMILES. This tool returns `num_atoms` (heavy atoms from RDKit `GetNumAtoms()`).
+
+**Tool:** `mcp__boltz_mcp__validate_ligand_smiles`
+
+**Parameters:**
+- `smiles`: Cyclic peptide SMILES string (from Step P1.2)
+
+**Routing Logic:**
+```
+For each passing candidate:
+    heavy_atoms = validate_ligand_smiles(smiles).num_atoms
+
+    IF heavy_atoms ≤ 128:
+        → Track A (Boltz-2 SMILES affinity) + Track B (AlphaFold3)
+    ELSE:
+        → Track B (AlphaFold3) only
+
+    All candidates → Gnina docking (on predicted complex structures)
+```
+
+> **Why 128 atoms?** Boltz-2 SMILES affinity prediction has a practical limit of ~128 heavy atoms for the ligand. Larger macrocyclic peptides exceed this and should be evaluated via AlphaFold3 only.
+
+### Step P1.7: Cap Candidates for Phase 2 (≤100 for AF3)
+
+AlphaFold3 is computationally expensive (~15-60 min per prediction). To keep Phase 2 tractable, cap the total number of candidates entering Track B (AF3) at **100**.
+
+```
+# After routing, if total candidates > 100:
+#   1. Rank all PASS candidates by composite score = normalized(KD) + normalized(permeability)
+#   2. Keep top 100 candidates
+#   3. Ensure both heavy-atom classes are represented proportionally
+
+all_candidates = sorted(pass_candidates, key=composite_score, ascending=False)
+phase2_candidates = all_candidates[:100]
+
+# Track A subset: phase2_candidates where heavy_atoms ≤ 128
+# Track B: all phase2_candidates (≤100, within AF3 budget)
+```
+
+> **Why ≤100?** At ~15-60 min per AF3 prediction, 100 candidates = 25-100 GPU-hours. This balances coverage with compute budget. Adjust based on available resources.
+
+**Recommended:** Select top 20-50 candidates if compute is limited; up to 100 if GPU time allows.
 
 ---
 
-## Phase 1b: Boltz-2 SMILES Affinity Prediction
+## Phase 2: Structural Evaluation (Two Parallel Tracks)
 
-After Phase 1 DL filtering (iPAE/iPTM from protein-chain input), candidates undergo Boltz-2 affinity prediction using **SMILES ligand input** to properly model non-canonical amino acid chemistry (N-methylation, D-amino acids, piperidine caps) that protein-chain input cannot represent.
+Candidates are evaluated through two parallel structural prediction and docking tracks. Track A (Boltz-2 SMILES affinity) runs only for candidates with ≤128 heavy atoms. Track B (AlphaFold3) runs for ALL candidates. Both tracks include Gnina docking on predicted complex structures.
 
-### Step 1b.1: Convert HELM to SMILES
+### Track A: Boltz-2 SMILES Affinity (candidates ≤128 heavy atoms)
 
-**Tool:** `mcp__helmgpt_mcp__helm_to_smiles`
+Boltz-2 affinity prediction treats the cyclic peptide as a small molecule ligand (SMILES input), preserving exact ncAA chemistry (N-methylation, D-amino acids, non-standard caps) that protein-chain input cannot represent. Produces 3-head ensemble affinity predictions.
 
-**Purpose:** Convert HELM notation to SMILES, preserving ncAA chemistry (stereochemistry, N-methylation, D-amino acids, sidechain cyclization, piperidine caps).
-
-### Step 1b.2: Submit Boltz-2 Affinity Prediction (SMILES mode)
+#### Step 2A.1: Submit Boltz-2 Affinity Prediction
 
 **Tool:** `mcp__boltz_mcp__submit_affinity_prediction`
 
 **Parameters:**
+
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `protein_sequence` | Target protein sequence | Full-length target (e.g., KRAS 165 aa) |
-| `ligand_smiles` | Cyclic peptide SMILES | From HELM→SMILES conversion (Step 1b.1) |
-| `use_msa_server` | true | MSA for better accuracy |
-| `output_format` | "pdb" | PDB output for downstream use |
-| `accelerator` | "gpu" | GPU acceleration |
+| `protein_sequence` | KRAS protein sequence (165 aa) | Full-length target sequence |
+| `ligand_smiles` | Cyclic peptide SMILES | From HELM→SMILES conversion (Step P1.2) |
+| `use_msa_server` | false | Set to false when providing pre-computed MSA |
+| `msa_path` | Path to pre-computed KRAS `.a3m` | Pre-computed target MSA (from Prerequisites) |
+| `output_format` | `"pdb"` | PDB output for downstream Gnina docking |
+| `accelerator` | `"gpu"` | GPU acceleration |
+| `job_name` | (optional) | Candidate tracking name |
 
-> **Why SMILES input:** Boltz-2 protein-chain input treats the peptide as canonical amino acids, ignoring ncAA modifications. SMILES input treats the peptide as a small molecule ligand, preserving the exact chemistry (N-methylated backbone, D-stereochemistry, non-standard caps). This gives complementary affinity predictions.
+> **Pre-computed MSA:** Provide the pre-computed KRAS `.a3m` file (from Prerequisites) via `msa_path` for all candidates. This skips the slow MSA server query and reduces per-candidate runtime from ~8-15 min to ~2-5 min. Set `use_msa_server=false` since `msa_path` takes precedence.
 
-> **MSA reuse:** For screening multiple peptides against the same target, compute MSA once and reuse via `msa_path` parameter (saves ~5-10 min per job).
+#### Step 2A.2: Monitor & Collect Affinity Metrics
 
-### Step 1b.3: Collect Boltz-2 Ensemble Affinity Metrics
+**Tools:**
+- `mcp__boltz_mcp__get_job_status` — Check job progress
+- `mcp__boltz_mcp__get_job_result` — Retrieve results when completed
 
-Boltz-2 affinity prediction produces **three independent affinity prediction heads** (ensemble) plus confidence metrics:
-
-**Affinity Metrics (from `affinity_*.json`):**
+**Affinity Metrics (from `affinity_*.json` — 3-head ensemble):**
 
 | Metric | Description | Interpretation |
 |--------|-------------|----------------|
@@ -328,181 +346,202 @@ Boltz-2 affinity prediction produces **three independent affinity prediction hea
 |--------|-------------|----------------|
 | `confidence_score` | Overall model confidence | Higher is better |
 | `iptm` / `ligand_iptm` | Interface predicted TM-score | Higher = better complex |
-| `ptm` | Predicted TM-score | Higher = better fold |
 | `complex_plddt` | Complex per-residue confidence | Higher is better |
 | `complex_iplddt` | Interface per-residue confidence | Higher = better interface |
 | `complex_ipde` | Interface predicted distance error | Lower = more accurate |
 
-### Step 1b.4: Ensemble Affinity Filtering
+#### Step 2A.3: Gnina Docking on Boltz-2 Complex Structures
 
-Use consensus across the three affinity heads for robust filtering:
+Dock the ligand from Boltz-2 output against the receptor to get physics-based binding scores.
 
-```
-For each candidate:
-    # Ensemble affinity consensus
-    avg_affinity = mean(affinity_pred_value, affinity_pred_value1, affinity_pred_value2)
-    avg_prob = mean(affinity_probability_binary, affinity_probability_binary1, affinity_probability_binary2)
-    n_heads_positive = count(head > 0 for head in [pred_value, pred_value1, pred_value2])
-
-    IF avg_prob > 0.5 AND n_heads_positive >= 2 AND ligand_iptm > 0.70:
-        → HIGH CONFIDENCE BINDER: Proceed to Phase 2
-    ELSE IF avg_prob > 0.4 AND n_heads_positive >= 1 AND ligand_iptm > 0.60:
-        → MARGINAL: Consider for Phase 2
-    ELSE:
-        → DISCARD: Weak predicted affinity
-```
-
-**Recommended:** Select top 10-30 candidates for Phase 2 structure prediction & docking.
-
----
-
-## Phase 2: Structure Prediction & Docking Validation (HighFold3 + Gnina)
-
-Top candidates from Phase 1b are subjected to HighFold3 cyclic peptide structure prediction and Gnina docking scoring for independent binding validation.
-
-### Step 2.1: HighFold3 Cyclic Peptide Structure Prediction
-
-**Tool:** `mcp__highfold3_mcp__submit_cyclic_peptide_prediction`
-
-Predicts the 3D structure of each cyclic peptide candidate using AlphaFold3-based HighFold3 with **CycPOEM** (Cyclic Position Offset Encoding Matrix) and **Cyclization Switch** for head-to-tail cyclization modeling.
+**Tool:** `mcp__gnina_mcp__submit_molecular_docking`
 
 **Parameters:**
+
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `sequence` | Amino acid sequence | One-letter codes (e.g., "AVVFLAD") |
-| `output_dir` | (optional) | Custom output directory |
-| `name` | (optional) | Name for the prediction |
-| `config` | (optional) | Custom config file path |
-| `job_name` | (optional) | Job tracking name |
+| `receptor_file` | KRAS target PDB file | Or receptor extracted from Boltz-2 complex |
+| `ligand_file` | Ligand PDB/SDF from Boltz-2 output | Cyclic peptide structure |
+| `autobox_ligand` | Same ligand file | Auto-detect binding site from Boltz-2 pose |
+| `num_modes` | 9 | Number of docking poses |
+| `exhaustiveness` | 8 | Search thoroughness (increase to 16-32 for difficult cases) |
+| `cnn_scoring` | true | Use CNN-enhanced scoring |
+| `job_name` | (optional) | Candidate tracking name |
 
-**Runtime:** 15-60 minutes per peptide
+**Alternative (fast rescoring):** For quick scoring of Boltz-2 poses without re-docking:
 
-> **Note on complex prediction:** HighFold3 also provides `submit_cyclic_peptide_protein_complex_prediction` for peptide-protein complexes, but currently supports limited protein types (PDZ_domain, SH3_domain, WW_domain). For arbitrary targets like KRAS, use `submit_cyclic_peptide_prediction` for peptide structure, then Gnina docking against the target PDB.
+**Tool:** `mcp__gnina_mcp__score_protein_ligand`
 
-**Batch submission:**
-For multiple candidates, use `mcp__highfold3_mcp__submit_batch_peptide_prediction` (max 20 per batch):
-```
-sequences = ["AVVFLAD", "AGFFLVLLGVF", "ATFFILLD", ...]
-prediction_type = "cyclic"
-```
-
-### Step 2.2: Monitor HighFold3 Jobs
-
-**Tools:**
-- `mcp__highfold3_mcp__get_job_status` — Check progress with elapsed time and ETA
-- `mcp__highfold3_mcp__get_job_log` — View execution logs
-- `mcp__highfold3_mcp__list_jobs` — List all submitted jobs
-
-### Step 2.3: Gnina Docking Scoring
-
-**Tool:** `gnina_mcp` (TODO: MCP not yet implemented — see below for planned interface)
-
-**Purpose:**
-1. Dock HighFold3-predicted cyclic peptide structures against target protein PDB
-2. Score binding poses using Gnina's CNN scoring function (trained on PDBBind)
-3. Provides physics-informed binding affinity estimates complementary to DL predictions
-
-**Planned Parameters:**
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `receptor_pdb` | Target PDB file | KRAS or other target protein |
-| `ligand_pdb` | Peptide PDB from HighFold3 | Cyclic peptide structure |
-| `exhaustiveness` | 8-32 | Search thoroughness |
-| `num_modes` | 9 | Number of binding modes to generate |
-| `cnn_scoring` | "rescore" | Use CNN for rescoring Vina poses |
+| `receptor_file` | KRAS target PDB | Receptor structure |
+| `ligand_file` | Ligand from Boltz-2 output | Already in binding pose |
 
-**Expected Output Metrics:**
-| Metric | Description | Direction |
-|--------|-------------|-----------|
-| CNN score | Gnina CNN binding score | Higher = better |
-| CNN affinity (pKd) | Predicted -log(Kd) | Higher = stronger binding |
-| Vina score (kcal/mol) | AutoDock Vina energy | More negative = better |
-
-> **Gnina MCP Status:** Not yet implemented. To proceed without Gnina, use Boltz-2 ensemble affinity + HighFold3 confidence as Phase 2 filters. Gnina can be added later as an additional orthogonal validation.
-
-### Step 2.4: Phase 2 Filtering & Ranking
-
-```
-For each candidate:
-    # HighFold3 structure quality
-    IF HighFold3 pLDDT > 0.70:
-        → Structure is reliable for docking
-
-    # Gnina docking (when available)
-    IF CNN_affinity > 6.0 (pKd) AND Vina_score < -7.0 kcal/mol:
-        → HIGH PRIORITY: Strong docking hit
-    ELSE IF CNN_affinity > 5.0 AND Vina_score < -5.0:
-        → MEDIUM PRIORITY: Moderate docking hit
-
-    # Combined ensemble filter (Boltz-2 affinity + HighFold3 + Gnina)
-    Rank by: ensemble_affinity_score × HighFold3_confidence × Gnina_CNN_score
-```
-
-**Recommended:** Select top 5-15 candidates for Phase 3 MD evaluation.
+**Monitor & Retrieve:**
+- `mcp__gnina_mcp__get_job_status` — Check docking progress
+- `mcp__gnina_mcp__get_job_result` — Retrieve docking results
 
 ---
 
-## Phase 3: MD Simulation Final Evaluation
+### Track B: AlphaFold3 Complex Prediction (ALL candidates)
 
-Top candidates from Phase 2 are subjected to molecular dynamics simulations to evaluate binding stability and dynamics.
+AlphaFold3 predicts the protein-ligand complex structure for all candidates. Using `ligand_smiles` input captures exact ncAA chemistry (N-methylation, D-amino acids, piperidine caps, sidechain cyclization) without being limited to canonical amino acids.
 
-### Step 3.1: System Preparation & MD Simulation
+#### Step 2B.1: Prepare AF3 Input with Pre-computed MSA
 
-**Tool:** `mcp__gromacs_mcp__submit_*` or `mcp__amber_mcp__submit_*` (TODO: confirm tool names)
+Each candidate needs an `input.json` that references the pre-computed KRAS MSA (`.a3m` file from Prerequisites) and includes the cyclic peptide as a ligand SMILES. This avoids re-running the slow MSA search for every candidate.
 
-**Purpose:**
-1. Prepare peptide-target complex for MD (solvation, ion addition, energy minimization)
-2. Run production MD (recommended: 100-500 ns) to assess binding stability
-3. Evaluate RMSD, interaction persistence, binding free energy estimates
+**Input JSON template** (one per candidate):
+```json
+{
+  "name": "candidate_001",
+  "sequences": [
+    {
+      "protein": {
+        "id": "A",
+        "sequence": "KRAS_SEQUENCE_HERE",
+        "unpairedMsaPath": "/path/to/kras_target.a3m"
+      }
+    },
+    {
+      "ligand": {
+        "id": "B",
+        "smiles": "CYCLIC_PEPTIDE_SMILES_HERE"
+      }
+    }
+  ]
+}
+```
 
-### Step 3.2: MD Analysis & Final Selection
+> **Why `ligand_smiles` input?** AF3's protein chain input only handles canonical amino acids. SMILES input treats the cyclic peptide as a small molecule ligand, preserving the exact chemistry of ncAAs. This works for both canonical and non-canonical peptides.
 
-**Evaluation Criteria:**
-- **Binding stability:** Peptide RMSD relative to initial binding pose (< 3 Å = stable)
-- **Interaction persistence:** Key hydrogen bonds and contacts maintained > 80% of trajectory
-- **Binding free energy:** MM-PBSA or MM-GBSA estimates (more negative = better)
-- **Conformational sampling:** Peptide maintains cyclic conformation throughout simulation
+> **Macrocyclic SMILES fallback:** If AF3's internal RDKit fails on complex macrocyclic SMILES (ring perception issues), use `userCCD` definitions in the `input.json`. Convert SMILES → 3D coordinates via OpenBabel → CCD CIF format for AF3 input.
 
-### Combined Ranking
+#### Step 2B.2: Submit AF3 Prediction (single candidate)
 
-Rank final candidates using a composite score across all phases:
+**Tool:** `mcp__alphafold3_mcp__af3_predict_structure`
 
-| Metric | Weight | Source | Phase | Direction |
-|--------|--------|--------|-------|-----------|
-| iPAE (protein input) | 0.10 | Boltz-2 | 1 | Lower is better |
-| iPTM (protein input) | 0.10 | Boltz-2 | 1 | Higher is better |
-| Permeability | 0.10 | HELM-GPT | 1 | Higher is better |
-| Ensemble avg affinity | 0.15 | Boltz-2 SMILES | 1b | Higher is better |
-| Ensemble avg prob | 0.10 | Boltz-2 SMILES | 1b | Higher is better |
-| Gnina CNN affinity | 0.15 | Gnina | 2 | Higher is better |
-| MD binding stability | 0.15 | GROMACS/Amber | 3 | Lower RMSD is better |
-| MM-PBSA ΔG | 0.15 | GROMACS/Amber | 3 | Lower is better |
+**Parameters:**
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `data_path` | Path to `input.json` or its parent directory | Input with pre-computed MSA reference |
+| `mode` | `"a3m"` | Use pre-computed A3M MSA (skips MSA search) |
+| `run_template_search` | true | Still search for structural templates |
+| `device` | 2 | GPU device (see GPU Assignment) |
+| `flash_attention_implementation` | `"triton"` | Use `"xla"` for non-A100 GPUs |
+
+> **Why `mode="a3m"`?** This tells AF3 to read the MSA from the `unpairedMsaPath` in `input.json` instead of running MMseqs2 search. Saves ~30-60 min per candidate. Template search still runs (fast) unless disabled.
+
+#### Step 2B.3: Batch Processing (recommended for ≤100 candidates)
+
+Prepare `input.json` files in per-candidate subdirectories, each referencing the same pre-computed KRAS MSA. Use batch prediction to process all candidates efficiently (model loaded once, reused across predictions).
+
+**Tool:** `mcp__alphafold3_mcp__af3_predict_batch`
+
+**Parameters:**
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `input_dir` | Directory with variant subdirectories | Each subdirectory contains an `input.json` |
+| `device` | 2 | GPU device number |
+| `skip_existing` | true | Skip already-completed predictions |
+| `run_template_search` | true | Search for structural templates |
+| `flash_attention_implementation` | `"triton"` | Use `"xla"` for non-A100 GPUs |
+
+**Expected directory structure (≤100 candidates):**
+```
+af3_inputs/
+├── candidate_001/
+│   └── input.json    # references kras_target.a3m via unpairedMsaPath
+├── candidate_002/
+│   └── input.json
+└── ...
+    └── input.json    # max 100 candidates (capped in Step P1.7)
+```
+
+#### Step 2B.4: Collect AF3 Confidence Metrics
+
+**Key metrics from AF3 output:**
+
+| Metric | Description | Interpretation |
+|--------|-------------|----------------|
+| pLDDT | Per-residue confidence | > 0.70 = reliable structure |
+| pTM | Predicted TM-score | Overall fold quality |
+| iPTM | Interface predicted TM-score | Interface quality (primary metric) |
+| PAE | Predicted aligned error | Lower = more accurate positioning |
+
+#### Step 2B.5: Gnina Docking on AF3 Complex Structures
+
+**Tool:** `mcp__gnina_mcp__submit_molecular_docking`
+
+**Parameters:**
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `receptor_file` | KRAS PDB or receptor from AF3 output | Target protein structure |
+| `ligand_file` | Ligand extracted from AF3 complex output | Cyclic peptide structure |
+| `autobox_ligand` | Same ligand file | Binding site from AF3 predicted pose |
+| `num_modes` | 9 | Number of docking poses |
+| `exhaustiveness` | 8 | Search thoroughness |
+| `cnn_scoring` | true | CNN-enhanced scoring |
+| `job_name` | (optional) | Candidate tracking name |
+
+**Monitor & Retrieve:**
+- `mcp__gnina_mcp__get_job_status` / `mcp__gnina_mcp__get_job_result`
+
+---
+
+## Phase 3: Final Selection & Ranking
+
+### Composite Scoring
+
+Two scoring tables depending on heavy atom routing:
+
+**Candidates ≤128 heavy atoms (Boltz-2 + AF3 + Gnina):**
+
+| Metric | Weight | Source | Direction |
+|--------|--------|--------|-----------|
+| KRAS KD (μM) | 0.20 | HELM-GPT XGBoost | Lower is better |
+| Permeability (log cm/s) | 0.15 | HELM-GPT RF | Higher is better |
+| Boltz-2 ensemble avg affinity | 0.15 | Boltz-2 SMILES | Higher is better |
+| Boltz-2 ensemble avg prob | 0.10 | Boltz-2 SMILES | Higher is better |
+| AF3 iPTM | 0.10 | AlphaFold3 | Higher is better |
+| Gnina CNN affinity (best of Track A/B) | 0.15 | Gnina | Higher is better |
+| Gnina Vina score (best of Track A/B) | 0.15 | Gnina | More negative is better |
+
+**Candidates >128 heavy atoms (AF3 + Gnina only):**
+
+| Metric | Weight | Source | Direction |
+|--------|--------|--------|-----------|
+| KRAS KD (μM) | 0.25 | HELM-GPT XGBoost | Lower is better |
+| Permeability (log cm/s) | 0.20 | HELM-GPT RF | Higher is better |
+| AF3 iPTM | 0.15 | AlphaFold3 | Higher is better |
+| Gnina CNN affinity | 0.20 | Gnina | Higher is better |
+| Gnina Vina score | 0.20 | Gnina | More negative is better |
 
 ### Selection Strategy
+
 - Select top 5-10 designs for experimental testing
 - Ensure structural diversity (different binding modes / ncAA compositions)
-- Prioritize designs with stable MD trajectories and strong docking scores
+- Prioritize designs with strong Gnina docking scores AND good AF3 confidence
 - Include 1-2 designs with novel ncAA scaffolds for chemical diversity
 
 ---
 
 ## Quality Thresholds Reference Table
 
-| Metric | Excellent | Good | Acceptable | Source | Phase |
-|--------|-----------|------|------------|--------|-------|
-| Permeability | > -5.0 | > -6.0 | > -6.5 | HELM-GPT RF | 1 |
-| iPAE (protein input) | < 0.20 | < 0.30 | < 0.40 | Boltz-2 | 1 |
-| iPTM (protein input) | > 0.90 | > 0.80 | > 0.70 | Boltz-2 | 1 |
-| Ensemble avg affinity | > 0.5 | > 0.0 | > -0.3 | Boltz-2 SMILES | 1b |
-| Ensemble avg prob | > 0.6 | > 0.5 | > 0.4 | Boltz-2 SMILES | 1b |
-| Ligand iPTM (SMILES) | > 0.80 | > 0.70 | > 0.60 | Boltz-2 SMILES | 1b |
-| Complex iPLDDT (SMILES) | > 0.70 | > 0.50 | > 0.35 | Boltz-2 SMILES | 1b |
-| Complex iPDE (SMILES) | < 1.5 | < 2.5 | < 3.5 | Boltz-2 SMILES | 1b |
-| HighFold3 pLDDT | > 0.85 | > 0.70 | > 0.60 | HighFold3 | 2 |
-| Gnina CNN affinity (pKd) | > 7.0 | > 6.0 | > 5.0 | Gnina | 2 |
-| Gnina Vina score | < -8.0 | < -7.0 | < -5.0 | Gnina | 2 |
-| MD peptide RMSD | < 2.0 Å | < 3.0 Å | < 5.0 Å | GROMACS/Amber | 3 |
-| MM-PBSA ΔG | < -30 | < -20 | < -10 | GROMACS/Amber | 3 |
+| Metric | Excellent | Good | Acceptable | Source |
+|--------|-----------|------|------------|--------|
+| KRAS KD | < 1 μM | < 10 μM | < 100 μM | HELM-GPT XGBoost |
+| Permeability | > -5.0 | > -6.0 | > -6.5 | HELM-GPT RF |
+| Boltz-2 ensemble avg affinity | > 0.5 | > 0.0 | > -0.3 | Boltz-2 SMILES |
+| Boltz-2 ensemble avg prob | > 0.6 | > 0.5 | > 0.4 | Boltz-2 SMILES |
+| Ligand iPTM (Boltz-2) | > 0.80 | > 0.70 | > 0.60 | Boltz-2 SMILES |
+| AF3 pLDDT | > 0.85 | > 0.70 | > 0.60 | AlphaFold3 |
+| AF3 iPTM | > 0.80 | > 0.60 | > 0.40 | AlphaFold3 |
+| Gnina CNN affinity (pKd) | > 7.0 | > 6.0 | > 5.0 | Gnina |
+| Gnina Vina score (kcal/mol) | < -8.0 | < -7.0 | < -5.0 | Gnina |
 
 ---
 
@@ -511,44 +550,46 @@ Rank final candidates using a composite score across all phases:
 Present final results in this format:
 
 ```markdown
-## HELM-GPT Binder Design Results
+## HELM-GPT KRAS Binder Design Results
 
 ### Job Summary
 | Parameter | Value |
 |-----------|-------|
-| Target | {target_name} |
+| Target | KRAS |
 | Prior Model | {prior_model_path} |
+| Task | kras_perm |
 | RL Steps | {n_steps} |
 | Loss Type | {loss_type} |
 | Sequences Generated | {total_generated} |
-| Phase 1 Passed | {phase1_passed} |
-| Phase 2 Passed (docking) | {phase2_passed} |
-| Phase 3 Passed (MD) | {phase3_passed} |
+| Post-Phase 1 Passed | {post_phase1_passed} |
+| ≤128 atoms (Track A+B) | {track_a_count} |
+| >128 atoms (Track B only) | {track_b_only_count} |
 
 ### Top Designs
 
-#### Design 1: {design_id}
+#### Design 1: {design_id} (≤128 atoms / >128 atoms)
 | Metric | Value | Threshold | Status |
 |--------|-------|-----------|--------|
 | HELM | `{helm_sequence}` | - | - |
+| SMILES | `{smiles}` | - | - |
+| Heavy atoms | {n_atoms} | - | - |
+| KRAS KD | {value} μM | < 10 | PASS/FAIL |
 | Permeability | {value} log cm/s | > -6.0 | PASS/FAIL |
-| iPAE (protein) | {value} | < 0.30 | PASS/FAIL |
-| iPTM (protein) | {value} | > 0.80 | PASS/FAIL |
-| Ensemble avg affinity | {value} | > 0.0 | PASS/FAIL |
-| Ensemble avg prob | {value} | > 0.5 | PASS/FAIL |
-| Ligand iPTM (SMILES) | {value} | > 0.70 | PASS/FAIL |
+| Boltz-2 ensemble avg affinity | {value} | > 0.0 | PASS/FAIL/N/A |
+| Boltz-2 ensemble avg prob | {value} | > 0.5 | PASS/FAIL/N/A |
+| AF3 iPTM | {value} | > 0.60 | PASS/FAIL |
+| AF3 pLDDT | {value} | > 0.70 | PASS/FAIL |
 | Gnina CNN affinity | {value} pKd | > 6.0 | PASS/FAIL |
-| MD RMSD | {value} Å | < 3.0 | PASS/FAIL |
-| MM-PBSA ΔG | {value} kcal/mol | < -20 | PASS/FAIL |
+| Gnina Vina score | {value} kcal/mol | < -7.0 | PASS/FAIL |
 
 **Contains ncAAs:** {yes/no}
-**Output File:** `{output_path}`
+**Output Files:** `{output_path}`
 
 [Repeat for additional designs]
 
 ### Recommended for Synthesis
 1. {design_id_1} - Best composite score
-2. {design_id_2} - Best iPAE + ddG
+2. {design_id_2} - Best Gnina + AF3 consensus
 3. {design_id_3} - Most novel ncAA scaffold
 ```
 
@@ -556,65 +597,67 @@ Present final results in this format:
 
 ## Error Handling
 
-### Phase 1: RL + Boltz-2 Scoring Issues
-- **No convergence:** Increase `n_steps`, reduce `learning_rate`, or try `loss_type="reinvent"` first
+### Phase 1: RL Optimization Issues
+- **No convergence at 500 steps:** Extend to 1000 (maximum). If still not converging, reduce `learning_rate` or try `loss_type="reinvent"` first
 - **GPU OOM:** Reduce `batch_size` to 16 or 8
 - **Prior model not found:** Use `check_optimization_requirements` to locate available models
-- **Boltz-2 server unreachable:** Check `server_host` with `get_server_scorer_info`; verify server is running
-- **High iPAE across all designs:** Target may be challenging; consider different target region or longer peptide
+- **High KD across all designs:** Target may be challenging; consider longer peptide or different prior
 - **Low diversity / mode collapse:** Reduce `sigma` or increase `batch_size`
 
-### Phase 1b: Boltz-2 SMILES Affinity Issues
+### Post-Phase 1: Filtering Issues
 - **HELM→SMILES conversion failure:** Check HELM syntax; ensure cyclization link format is correct (`1:R1-N:R3`)
-- **All affinity heads negative:** Peptide may not bind as small molecule; check SMILES validity with RDKit
-- **Inconsistent ensemble heads:** Low confidence in prediction; rely more on protein-chain iPAE/iPTM
+- **All candidates filtered out:** Relax thresholds (KD < 100 μM, permeability > -6.5)
+- **validate_ligand_smiles failure:** SMILES may contain invalid chemistry; check RDKit parsing
+
+### Phase 2A: Boltz-2 SMILES Affinity Issues
+- **All affinity heads negative:** Peptide may not bind as small molecule; rely on AF3 Track B results
+- **Inconsistent ensemble heads:** Low confidence in prediction; weight AF3 + Gnina more heavily
 - **MSA timeout:** Use pre-computed MSA via `msa_path` parameter for faster reruns
+- **Ligand too large:** Should have been routed to Track B only (>128 heavy atoms)
 
-### Phase 2: HighFold3 + Gnina Issues
-- **Low HighFold3 pLDDT:** Peptide structure may be poorly predicted; try different peptide lengths or check sequence
-- **HighFold3 complex prediction limited:** Only PDZ/SH3/WW domains supported for complex; use standalone cyclic peptide prediction + Gnina docking instead
-- **Poor docking score:** Binding pose may be unfavorable; consider alternative binding regions or increase `exhaustiveness`
-- **Gnina scoring failure:** Check ligand/receptor PDB formatting and chain assignments
+### Phase 2B: AlphaFold3 Issues
+- **Low pLDDT:** Peptide structure may be poorly predicted; try different peptide lengths
+- **Macrocyclic SMILES parsing failure:** Use `af3_predict_structure` with custom `input.json` and `userCCD` definitions (SMILES → OpenBabel 3D coords → CCD CIF format)
+- **GPU memory error:** Reduce `buckets` parameter or use a GPU with more memory
 
-### Phase 3: MD Simulation Issues
-- **High RMSD drift:** Peptide dissociates during MD; binding pose unstable — discard candidate
-- **System preparation failure:** Check protonation states, missing atoms, or force field compatibility
-- **Simulation crash:** Reduce timestep, check for steric clashes, or extend equilibration
+### Phase 2 (Gnina): Docking Issues
+- **Poor docking scores across all candidates:** Check receptor PDB formatting and binding site definition
+- **Gnina scoring failure:** Verify ligand/receptor PDB formatting and that ligand has 3D coordinates
+- **No binding site found:** Provide explicit `center` and `size` parameters instead of `autobox_ligand`
 
 ---
 
 ## Example Usage
 
-### Standard Binder Design
+### Standard KRAS Binder Design
 ```
-Design synthesizable cyclic peptide binders using HELM-GPT:
-- Prior model: models/permeability_prior.pt (pre-trained with permeability)
-- 1000 RL steps with reinvent_cpl loss
-- Boltz-2 complex prediction (protein sequence input) for iPAE, iPTM as RL rewards
-- Filter: permeability > -6.0, iPAE < 0.30, iPTM > 0.80
-- Validate top 30 with HighFold3 structure prediction + Gnina docking
-- Run MD simulations on top 10 for final binding stability evaluation
+Design synthesizable cyclic peptide KRAS binders using HELM-GPT:
+- Task: kras_perm (co-optimize KRAS binding + permeability)
+- Prior model: examples/data/models/prior/perm_agent_final.pt
+- 500 RL steps with reinvent_cpl loss, batch_size=32 (extend to 1000 only if not converged)
+- Filter: KD < 10 μM, permeability > -6.0
+- Route by heavy atoms: ≤128 → Boltz-2 + AF3 + Gnina; >128 → AF3 + Gnina
+- Select top 10 diverse designs
 ```
 
 ### ncAA-Enriched Design
 ```
-Design ncAA-containing cyclic peptide binders:
+Design ncAA-containing cyclic peptide KRAS binders:
 - Use HELM-GPT with full 3104-monomer library
-- 500 RL steps with Boltz-2 structural feedback (protein sequence input)
-- HighFold3 + Gnina docking validation
-- MD simulation of top candidates
-- Select top 10 diverse designs for synthesis
+- Task: kras_perm, 500 RL steps
+- Focus on candidates with ncAA scaffolds (N-methylation, D-amino acids)
+- AF3 + Gnina validation for all candidates
+- Select top 10 diverse designs including novel ncAA scaffolds
 ```
 
 ### High-Throughput Screening
 ```
-Generate diverse binder candidates using HELM-GPT:
+Generate diverse KRAS binder candidates using HELM-GPT:
 - 2000 RL steps, batch_size=64
-- Boltz-2 iPAE + iPTM + permeability as rewards
-- Select top 50 by DL metrics
-- HighFold3 + Gnina docking filtering
-- MD simulation of top 10-20
-- Cluster and select top 10 diverse designs
+- Filter top 50 by KD + permeability
+- Run both Boltz-2 (≤128 atoms) and AF3 (all) in parallel
+- Gnina docking on all predicted complexes
+- Composite score ranking → top 10 diverse designs
 ```
 
 ---
@@ -623,57 +666,53 @@ Generate diverse binder candidates using HELM-GPT:
 
 | Phase | MCP Server | Tool | Purpose |
 |-------|------------|------|---------|
-| 1 | helmgpt_mcp | `check_optimization_requirements` | Verify setup |
-| 1 | helmgpt_mcp | `get_server_scorer_info` | Verify Boltz-2 server |
-| 1 | helmgpt_mcp | `get_optimization_tasks` | List available tasks |
-| 1 | helmgpt_mcp | `submit_optimize_peptides` | RL optimization with DL feedback |
-| 1 | helmgpt_mcp | `get_job_status` / `get_job_log` | Monitor training |
-| 1 | helmgpt_mcp | `get_job_result` | Retrieve optimized sequences |
-| 1 | helmgpt_mcp | `validate_helm_notation` | HELM validity check |
-| 1 | helmgpt_mcp | `helm_to_smiles` | Convert HELM to SMILES |
-| 1 | helmgpt_mcp | `predict_permeability` | Permeability verification |
-| 1 | helmgpt_mcp | `score_with_server` (boltz2) | Boltz-2 iPAE/iPTM scoring (protein seq input) |
-| 1b | boltz_mcp | `submit_affinity_prediction` | SMILES affinity prediction (3-head ensemble) |
-| 1b | boltz_mcp | `get_job_status` / `get_job_result` | Monitor & retrieve affinity results |
-| 2 | highfold3_mcp | `submit_cyclic_peptide_prediction` | Cyclic peptide structure (CycPOEM) |
-| 2 | highfold3_mcp | `submit_batch_peptide_prediction` | Batch cyclic peptide structures |
-| 2 | gnina_mcp | (TODO — not yet implemented) | CNN docking scoring |
-| 2 | highfold3_mcp | `get_job_status` / `get_job_result` | Monitor & retrieve |
-| 3 | gromacs_mcp / amber_mcp | `submit_*` | MD simulation |
-| 3 | gromacs_mcp / amber_mcp | `get_job_status` / `get_job_result` | Monitor & retrieve |
+| 1 | helm_gpt_mcp | `check_optimization_requirements` | Verify setup and models |
+| 1 | helm_gpt_mcp | `get_optimization_tasks` | List available tasks (confirm `kras_perm`) |
+| 1 | helm_gpt_mcp | `submit_optimize_peptides` | RL optimization with local scoring |
+| 1 | helm_gpt_mcp | `get_job_status` / `get_job_log` | Monitor training |
+| 1 | helm_gpt_mcp | `get_job_result` | Retrieve optimized sequences |
+| Post-1 | helm_gpt_mcp | `validate_helm_notation` | HELM validity check |
+| Post-1 | helm_gpt_mcp | `helm_to_smiles` / `submit_helm_to_smiles_batch` | Convert HELM to SMILES |
+| Post-1 | helm_gpt_mcp | `predict_permeability` / `submit_permeability_batch` | Permeability verification |
+| Post-1 | helm_gpt_mcp | `predict_kras_binding` / `submit_kras_binding_batch` | KRAS KD verification |
+| Post-1 | boltz_mcp | `validate_ligand_smiles` | Heavy atom count for routing |
+| 2A | boltz_mcp | `submit_affinity_prediction` | SMILES affinity (3-head ensemble) |
+| 2A | boltz_mcp | `get_job_status` / `get_job_result` | Monitor & retrieve affinity |
+| 2A | gnina_mcp | `submit_molecular_docking` | Dock on Boltz-2 complexes |
+| 2B | alphafold3_mcp | `af3_predict_structure` (mode=a3m) | Protein-ligand complex with pre-computed MSA |
+| 2B | alphafold3_mcp | `af3_predict_batch` | Batch complex predictions |
+| 2B | gnina_mcp | `submit_molecular_docking` | Dock on AF3 complexes |
+| 2A/2B | gnina_mcp | `score_protein_ligand` | Fast rescoring (no re-docking) |
+| 2A/2B | gnina_mcp | `get_job_status` / `get_job_result` | Monitor & retrieve docking |
 
 ---
 
-## Key Differences from RFpeptides Workflow
+## Key Differences from Old Workflow
 
-| Aspect | RFpeptides Workflow | HELM-GPT Workflow |
-|--------|--------------------|--------------------|
-| Sequence space | Canonical amino acids only | 3,104+ monomers (incl. ncAAs) |
-| Design engine | ProteinMPNN (structure-based) | HELM-GPT RL (generative) |
-| Backbone source | RFdiffusion de novo | Boltz-2 structure prediction |
-| Permeability | Not optimized | Pre-trained prior + RL reward |
-| Synthesizability | Requires post-hoc check | Built-in via HELM library |
-| DL feedback | AfCycDesign reprediction (post-hoc) | Boltz-2 iPAE/iPTM (in-loop, protein seq input) |
-| Structural scoring | AfCycDesign iPAE | Boltz-2 iPAE + iPTM (complex prediction) |
-| Affinity validation | - | Boltz-2 SMILES 3-head ensemble affinity |
-| Structure prediction | - | HighFold3 CycPOEM cyclic peptide structures |
-| Docking validation | - | Gnina CNN docking scoring |
-| Final evaluation | - | MD simulations (GROMACS/Amber) |
-| Workflow phases | 5 phases | 3 phases (1, 1b, 2, 3) |
+| Aspect | Old Workflow | New Workflow |
+|--------|-------------|-------------|
+| RL reward | Boltz-2 iPAE/iPTM (slow, requires dedicated GPU server) | KRAS XGBoost + permeability RF (fast, local) |
+| Phase 1 GPUs | 2 (HELM-GPT + Boltz-2 server) | 1 (HELM-GPT only) |
+| Post-RL filter | iPAE < 0.30, iPTM > 0.80 | KD < 10 μM, permeability > -6.0 |
+| Structure prediction | HighFold3 (CycPOEM) | AlphaFold3 (`ligand_smiles` input) |
+| Boltz-2 role | RL reward (all candidates) + Phase 1b affinity (all) | Phase 2A affinity only (≤128 heavy atoms) |
+| Heavy atom routing | Not considered | ≤128 → Boltz-2 + AF3 + Gnina; >128 → AF3 + Gnina |
+| MD simulation | Full GROMACS/Amber phase | Removed |
+| Gnina docking | TODO / not implemented | Fully integrated with real tool interfaces |
+| Workflow phases | 4 phases (1, 1b, 2, 3) | 3 phases (1, Post-1 filter, 2 parallel tracks, 3 ranking) |
 
 ---
 
 ## Related Workflows
 
-- `binder_design_rfpeptides.md` - RFpeptides backbone-first binder design (5-stage)
-- `binder_design_afcycdesign.md` - AfCycDesign-only binder design
+- `binder_design_rfpeptides.md` — RFpeptides backbone-first binder design (5-stage, canonical AAs only)
+- `binder_design_afcycdesign.md` — AfCycDesign-only binder design
 
 ## References
 
-- HELM-GPT: GPT-based generative model for macrocyclic peptide design with HELM notation
-- Boltz-2: Biomolecular complex structure prediction (iPAE, iPTM) and SMILES-based affinity prediction (3-head ensemble)
-- HighFold3: AlphaFold3-based structure prediction with CycPOEM cyclic positional encoding and Cyclization Switch
-- Gnina: CNN-based molecular docking with learned scoring functions (Vina + CNN)
-- GROMACS / Amber: Molecular dynamics simulation suites for binding stability evaluation
-- CycPeptMPDB: Cyclic peptide membrane permeability database
-- REINVENT + CPL: Reinforcement learning with contrastive preference learning for molecular optimization
+- **HELM-GPT**: GPT-based generative model for macrocyclic peptide design with HELM notation (3,104+ monomer library)
+- **Boltz-2**: Biomolecular complex structure prediction and SMILES-based affinity prediction (3-head ensemble)
+- **AlphaFold3**: Protein-ligand complex structure prediction with `ligand_smiles` input
+- **Gnina**: CNN-based molecular docking with learned scoring functions (Vina + CNN, trained on PDBBind)
+- **CycPeptMPDB**: Cyclic peptide membrane permeability database
+- **REINVENT + CPL**: Reinforcement learning with contrastive preference learning for molecular optimization
