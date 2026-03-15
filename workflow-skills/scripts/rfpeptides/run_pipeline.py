@@ -282,7 +282,7 @@ def run_rosetta_relax(input_pdb: str, output_dir: str, rounds: int = 4) -> Optio
         "--output", str(output_dir),
         "--rounds", str(rounds),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
     if result.returncode != 0:
         return None
 
