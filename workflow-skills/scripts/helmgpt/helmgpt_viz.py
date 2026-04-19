@@ -12,8 +12,9 @@ Generates separate figures after the HELM-GPT binder design workflow:
 7. Boltz-2 Ensemble Affinity Distribution - Violin + strip
 8. Boltz-2 Binding Probability Distribution - Violin + strip
 9. Composite Score Distribution - Violin + strip
-10. Metrics Table - Top designs with three-line academic style
-11. Execution Timeline - Gantt chart of pipeline phases
+10. Radar Chart - Top 5 candidates across normalized metrics
+11. Metrics Table - Top designs with three-line academic style
+12. Execution Timeline - Gantt chart of pipeline phases
 
 Each figure is saved as a separate PNG + PDF file.
 A merged summary figure can also be generated.
@@ -563,6 +564,91 @@ def plot_composite_distribution(df, output_path=None):
     return fig
 
 
+def plot_radar_chart(df, output_path=None, top_n=5):
+    """Plot radar/spider chart of top candidates across 5 normalized metrics."""
+    # Define metrics: (column, label, normalize_fn)
+    metric_defs = [
+        ('raw_kras_kd', 'KD',
+         lambda v: np.clip(1 - (v / 10), 0, 1)),
+        ('raw_permeability', 'Permeability',
+         lambda v: np.clip((v - (-8)) / ((-5) - (-8)), 0, 1)),
+        ('af3_iptm', 'AF3 iPTM',
+         lambda v: np.clip(v, 0, 1)),
+        ('gnina_best_cnn', 'Gnina CNN',
+         lambda v: np.clip(v / 10, 0, 1)),
+        ('gnina_best_vina', 'Gnina Vina',
+         lambda v: np.clip((-v) / 10, 0, 1)),
+    ]
+
+    # Filter to metrics present in the dataframe
+    available = [(col, label, fn) for col, label, fn in metric_defs if col in df.columns]
+    if len(available) < 3:
+        print("Radar chart: fewer than 3 metrics available, skipping")
+        return None
+
+    # Select top candidates by composite score with all available metrics present
+    df_work = df.copy()
+    df_work['_score'] = calculate_composite_score(df_work)
+    mask = pd.Series(True, index=df_work.index)
+    for col, _, _ in available:
+        mask &= df_work[col].notna()
+    df_valid = df_work[mask].sort_values('_score', ascending=False).head(top_n)
+
+    if len(df_valid) == 0:
+        print("Radar chart: no candidates with all metrics, skipping")
+        return None
+
+    # Compute normalized values
+    labels = [label for _, label, _ in available]
+    n_metrics = len(labels)
+    angles = np.linspace(0, 2 * np.pi, n_metrics, endpoint=False).tolist()
+    angles += angles[:1]  # close the polygon
+
+    fig = plt.figure(figsize=(6, 6))
+    ax = fig.add_subplot(111, polar=True)
+
+    # Draw polygon (spider-net) gridlines instead of circles
+    grid_levels = [0.2, 0.4, 0.6, 0.8, 1.0]
+    for level in grid_levels:
+        grid_vals = [level] * n_metrics + [level]
+        ax.plot(angles, grid_vals, color='gray', linewidth=1.0, alpha=0.4)
+    # Draw spoke lines from center to each vertex
+    for angle in angles[:-1]:
+        ax.plot([angle, angle], [0, 1], color='gray', linewidth=1.0, alpha=0.4)
+    # Hide default circular gridlines
+    ax.yaxis.grid(False)
+    ax.xaxis.grid(False)
+
+    # Colorblind-friendly palette
+    radar_colors = sns.color_palette('colorblind', n_colors=len(df_valid))
+
+    for i, (_, row) in enumerate(df_valid.iterrows()):
+        values = [fn(row[col]) for col, _, fn in available]
+        values += values[:1]  # close polygon
+        design_id = row.get('design_id', f'#{i}')
+
+        ax.plot(angles, values, 'o-', linewidth=1.5, color=radar_colors[i],
+                label=design_id, markersize=4)
+        ax.fill(angles, values, alpha=0.1, color=radar_colors[i])
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(labels, fontsize=10)
+    ax.set_ylim(0, 1)
+    ax.set_yticks(grid_levels)
+    ax.set_yticklabels(['0.2', '0.4', '0.6', '0.8', '1.0'], fontsize=7, color='gray')
+    ax.set_title('Top Candidates — Multi-Metric Profile',
+                 fontsize=13, fontweight='bold', pad=20)
+    ax.spines['polar'].set_visible(False)
+    ax.legend(loc='upper right', bbox_to_anchor=(1.25, 1.1), fontsize=9,
+              framealpha=0.9)
+
+    plt.tight_layout()
+    if output_path:
+        save_for_pub(fig, output_path)
+        print(f"Saved: {output_path}.png, {output_path}.pdf")
+    return fig
+
+
 def plot_metrics_table(df, output_path=None, top_n=6):
     """Plot 10: Top designs table with three-line academic style."""
     fig = plt.figure(figsize=(6, 4))
@@ -742,6 +828,9 @@ def create_separate_figures(results_dir: str, output_prefix: str = None):
 
     # Composite score
     _save(plot_composite_distribution(df, f"{output_prefix}_composite_score"), "composite_score")
+
+    # Radar chart
+    _save(plot_radar_chart(df, f"{output_prefix}_radar_chart"), "radar_chart")
 
     # Metrics table
     _save(plot_metrics_table(df, f"{output_prefix}_metrics_table"), "metrics_table")

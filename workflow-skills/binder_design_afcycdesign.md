@@ -241,10 +241,12 @@ for f in sorted(os.listdir(output_dir)):
                 if d:
                     metrics = d
 
-    # Parse binder sequence from PDB
+    # Parse binder sequence from PDB (first model only)
     seq = []
     with open(pdb_file) as pf:
         for line in pf:
+            if line.startswith('ENDMDL'):
+                break
             if line.startswith('ATOM') and line[21] == 'B' and line[12:16].strip() == 'CA':
                 seq.append(aa3to1.get(line[17:20].strip(), 'X'))
 

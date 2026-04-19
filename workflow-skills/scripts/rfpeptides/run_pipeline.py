@@ -238,7 +238,7 @@ def run_proteinmpnn(input_pdb: str, output_dir: str) -> Optional[str]:
     cmd = [
         PATHS["mpnn_python"], PATHS["mpnn_script"],
         "--pdb_path", str(input_pdb),
-        "--pdb_path_chains", "A",
+        "--pdb_path_chains", "B",
         "--out_folder", str(output_dir),
         "--num_seq_per_target", "1",
         "--sampling_temp", str(MPNN_TEMP),
@@ -321,7 +321,7 @@ def process_single_design(args) -> Tuple[str, Optional[str], Optional[str]]:
         # Step B: Thread sequence onto backbone
         threaded_pdb = str(rnd_dir / f"{design_id}_r{rnd}_threaded.pdb")
         os.makedirs(str(rnd_dir), exist_ok=True)
-        thread_sequence(current_pdb, threaded_pdb, seq, chain="A")
+        thread_sequence(current_pdb, threaded_pdb, seq, chain="B")
 
         # Step C: Rosetta FastRelax
         relax_dir = str(rnd_dir / "relax")
@@ -756,7 +756,7 @@ def main():
                     "--input",
                 ] + input_pdbs + [
                     "--output", str(stage4_dir),
-                    "--peptide_chain", "A",
+                    "--peptide_chain", "B",
                     "--ddg_threshold", str(args.ddg_threshold),
                     "--sap_threshold", str(args.sap_threshold),
                     "--cms_threshold", str(args.cms_threshold),
