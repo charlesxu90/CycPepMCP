@@ -41,6 +41,22 @@ STAGE 5: Structural Diversity & Final Selection (RMSD clustering)
 
 Generate cyclic peptide backbone structures that are geometrically compatible with the target binding site.
 
+### Target Difficulty & Design Scale
+
+The RFpeptides paper (Nat Chem Biol 2025, s41589-025-01929-w) reports that in-silico pass rates depend strongly on target surface topology. Concave pockets yield iPAE distributions centered near the pass threshold; flat surfaces produce distributions peaked near iPAE ~0.9 with only a thin low-iPAE tail. Generate designs at scale that matches target difficulty.
+
+| Target class | Example | num_designs (paper) | Raw iPAE pass rate |
+|--------------|---------|---------------------|---------------------|
+| Concave pocket | MCL1 | 9,965 backbones | ~8% pass iPAE < 0.30 |
+| Concave pocket | MDM2 | 40,000 | ~19% pass iPAE < 0.30 |
+| Shallow groove | GABARAP | 80,000 (20k backbones × seqs) | ~2% pass iPAE < 0.13 |
+| Flat β-helix | RbtA | 80,000 | ~2% pass iPAE < 0.40 |
+
+**Practical guidance:**
+- Concave pocket targets: 2,000–10,000 designs typically sufficient to find hits
+- Flat / β-sheet / groove targets: 20,000–80,000 designs; relax iPAE threshold (see Stage 3)
+- Small pilot runs (< 200 designs) cannot be expected to yield passing candidates on flat targets — the paper's 98% failure rate on RbtA implies ~1 expected pass per 50 designs even at relaxed thresholds.
+
 ### Step 1.1: Validate Target Structure
 
 **Tool:** `mcp__rfpeptides_mcp__validate_pdb_file`
@@ -68,7 +84,7 @@ Choose the appropriate submission tool based on design requirements:
 |-----------|---------|-------------|
 | `target_pdb` | (required) | Path to target PDB file |
 | `binder_length` | (required) | Cyclic peptide length (7-20 residues typical) |
-| `num_designs` | (required) | Number of backbones to generate |
+| `num_designs` | (required) | Number of backbones to generate (2k–10k pockets; 20k–80k flat surfaces) |
 | `target_chain` | "A" | Target protein chain ID |
 | `binder_length_max` | null | Max length for variable-length generation |
 | `target_start_residue` | null | Start residue of target to include |
@@ -87,7 +103,7 @@ Choose the appropriate submission tool based on design requirements:
 | `target_pdb` | (required) | Path to target PDB file |
 | `hotspot_residues` | (required) | List of integer residue numbers (e.g., `[54, 56, 58, 61]`) |
 | `binder_length` | (required) | Cyclic peptide length |
-| `num_designs` | (required) | Number of backbones to generate |
+| `num_designs` | (required) | Number of backbones to generate (2k–10k pockets; 20k–80k flat surfaces) |
 | `target_chain` | "A" | Target chain ID |
 | `binder_length_max` | null | Max length for variable-length generation |
 | `diffusion_steps` | 50 | Number of diffusion timesteps |
@@ -313,10 +329,12 @@ Use this to predict the isolated binder structure (without target) to assess fol
 iPAE = mean PAE at binder-target interface residues
 ```
 - Lower is better
-- **Target-specific thresholds:**
-  - MCL1/MDM2: iPAE < 0.30
-  - GABARAP: iPAE < 0.13
-  - General: iPAE < 0.20
+- **Target-specific thresholds (from RFpeptides paper):**
+  - MCL1 / MDM2: iPAE < 0.30 (concave pocket)
+  - GABARAP: iPAE < 0.13 (shallow groove)
+  - RbtA: iPAE < 0.40 (flat β-helix — paper explicitly raised threshold)
+  - General pocket: iPAE < 0.20
+  - General flat surface: iPAE < 0.35
 
 #### Structural RMSD
 ```
@@ -552,12 +570,17 @@ figures = display_results("results/case2_RbtA_v2/prod_pipeline")
 | CMS | > 400 | > 300 | > 200 | Contact surface (Å²) |
 
 ### Target-Specific iPAE Thresholds
-| Target | Strict | Relaxed |
-|--------|--------|---------|
-| MCL1 | 0.20 | 0.30 |
-| MDM2 | 0.20 | 0.30 |
-| GABARAP | 0.13 | 0.20 |
-| General | 0.15 | 0.25 |
+
+Thresholds reported in the RFpeptides paper (Nat Chem Biol 2025) vary substantially by target. The authors explicitly raised thresholds for flat surfaces where most designs fail confidence filters (paper p.1955: "adjustments to filtering thresholds were required on the basis of the shape and chemical composition of the target pocket").
+
+| Target | Strict | Relaxed | Surface Type |
+|--------|--------|---------|--------------|
+| MCL1 | 0.20 | 0.30 | Concave pocket |
+| MDM2 | 0.20 | 0.30 | Concave pocket |
+| GABARAP | 0.13 | 0.20 | Shallow groove |
+| RbtA | 0.30 | 0.40 | Flat β-helix surface |
+| General pocket | 0.15 | 0.25 | — |
+| General flat | 0.25 | 0.35 | — |
 
 ---
 
@@ -619,9 +642,10 @@ Present final results in this format:
 - **Relax failures:** Check for severe clashes, reduce cycles
 
 ### Stage 3: Validation Failures
-- **High iPAE:** Design may not bind as intended
+- **High iPAE:** Design may not bind as intended. For flat surfaces, expect most designs to have iPAE 0.7–0.9 — this is consistent with the paper (Supp Fig. 4). Scale up generation (≥20k) and use target-appropriate threshold.
 - **High RMSD:** Backbone may have changed significantly
-- **Low pLDDT:** Binder region may be disordered
+- **Low pLDDT:** Binder region may be disordered. Common for extended loop-like binders on flat surfaces; use pLDDT > 0.60 for flat targets instead of 0.70.
+- **Very low pass rate (<2%):** Normal for flat/difficult targets. Confirm `num_designs` is large enough (see Target Difficulty & Design Scale in Stage 1).
 
 ### Stage 4: Poor ddG
 - Interface may be unfavorable
@@ -710,7 +734,7 @@ python workflow-skills/scripts/rfpeptides/run_pipeline.py \
 | `--workers` | 20 | CPU workers for Stage 2 (parallel) |
 | `--gpu_workers` | 4 | GPU workers for Stage 3 (AfCycDesign) |
 | `--num_gpus` | 2 | GPUs for AfCycDesign rotation |
-| `--ipae_threshold` | 0.3 | iPAE filter threshold |
+| `--ipae_threshold` | 0.3 | iPAE filter threshold (use 0.4 for flat surfaces like RbtA) |
 | `--ddg_threshold` | -50.0 | ddG filter threshold (REU) |
 | `--sap_threshold` | 35.0 | SAP filter threshold |
 | `--cms_threshold` | 300.0 | CMS filter threshold (A^2) |
