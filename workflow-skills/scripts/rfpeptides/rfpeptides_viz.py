@@ -41,19 +41,100 @@ GRAY = [0.5, 0.5, 0.5]
 # Figure size for individual plots
 FIGSIZE = (5, 5)
 
-# Quality thresholds for RFpeptides pipeline
+# Quality thresholds — paper-faithful values from RFpeptides (Nat Chem Biol 2025).
+# Paper Methods 2.4 + Supp. Fig. 4: iPAE / ddG cutoffs vary by target topology;
+# CMS, SAP, pLDDT, RMSD are uniform across targets.
+#
+# Each entry below is annotated with (paper_value, label) so plots can show what
+# the line means. `general` is the fallback when target cannot be auto-detected.
+PAPER_THRESHOLDS = {
+    'mcl1': {
+        'ipae':  (0.30, 'Paper iPAE<0.30 (MCL1, concave pocket)'),
+        'ddg':   (-30, 'Paper ddG<-30 REU'),
+        'sap':   (35,  'Paper SAP<35'),
+        'cms':   (300, 'Paper CMS>300 Å²'),
+        'plddt': (0.70, 'Paper pLDDT>0.70'),
+    },
+    'mdm2': {
+        'ipae':  (0.30, 'Paper iPAE<0.30 (MDM2, concave pocket)'),
+        'ddg':   (-50, 'Paper ddG<-50 REU (MDM2-specific)'),
+        'sap':   (35,  'Paper SAP<35'),
+        'cms':   (300, 'Paper CMS>300 Å²'),
+        'plddt': (0.70, 'Paper pLDDT>0.70'),
+    },
+    'gabarap': {
+        'ipae':  (0.13, 'Paper iPAE<0.13 (GABARAP, shallow groove)'),
+        'ddg':   (-30, 'Paper ddG<-30 REU'),
+        'sap':   (35,  'Paper SAP<35'),
+        'cms':   (300, 'Paper CMS>300 Å²'),
+        'plddt': (0.70, 'Paper pLDDT>0.70'),
+    },
+    'rbta': {
+        'ipae':  (0.40, 'Paper iPAE<0.40 (RbtA, flat β-helix)'),
+        'ddg':   (-30, 'Paper ddG<-30 REU'),
+        'sap':   (35,  'Paper SAP<35'),
+        'cms':   (300, 'Paper CMS>300 Å²'),
+        'plddt': (0.70, 'Paper pLDDT>0.70'),
+    },
+    'general': {
+        'ipae':  (0.30, 'Paper iPAE<0.30 (concave default)'),
+        'ddg':   (-30, 'Paper ddG<-30 REU'),
+        'sap':   (35,  'Paper SAP<35'),
+        'cms':   (300, 'Paper CMS>300 Å²'),
+        'plddt': (0.70, 'Paper pLDDT>0.70'),
+    },
+}
+
+# Active thresholds (set by configure_thresholds() based on detected target).
 QUALITY_THRESHOLDS = {
-    'ddg_good': -50,
-    'ddg_acceptable': -30,
+    'ddg_good': -50,         # tighter "excellent" line, for context
+    'ddg_acceptable': -30,   # paper threshold (will be overwritten)
     'ipae_good': 0.15,
-    'ipae_acceptable': 0.20,
-    'plddt_good': 0.70,
-    'plddt_acceptable': 0.50,
+    'ipae_acceptable': 0.30,
+    'plddt_good': 0.90,
+    'plddt_acceptable': 0.70,
     'sap_good': 25,
     'sap_acceptable': 35,
     'cms_good': 400,
     'cms_acceptable': 300,
 }
+
+# Active threshold labels, populated by configure_thresholds().
+THRESHOLD_LABELS = {
+    'ipae': 'Paper threshold',
+    'ddg':  'Paper threshold',
+    'sap':  'Paper threshold',
+    'cms':  'Paper threshold',
+    'plddt':'Paper threshold',
+}
+
+
+def detect_target(results_dir) -> str:
+    """Infer target name (mcl1/mdm2/gabarap/rbta) from the results path."""
+    path = str(results_dir).lower()
+    for key in ('mcl1', 'mdm2', 'gabarap', 'rbta'):
+        if key in path:
+            return key
+    return 'general'
+
+
+def configure_thresholds(target: str) -> None:
+    """Populate global QUALITY_THRESHOLDS and THRESHOLD_LABELS for a target.
+
+    Sets the 'acceptable' tier to the paper's per-target threshold (the one
+    actually used for filtering); the 'good' tier remains a tighter context line.
+    """
+    paper = PAPER_THRESHOLDS.get(target, PAPER_THRESHOLDS['general'])
+    QUALITY_THRESHOLDS['ipae_acceptable']  = paper['ipae'][0]
+    QUALITY_THRESHOLDS['ddg_acceptable']   = paper['ddg'][0]
+    QUALITY_THRESHOLDS['sap_acceptable']   = paper['sap'][0]
+    QUALITY_THRESHOLDS['cms_acceptable']   = paper['cms'][0]
+    QUALITY_THRESHOLDS['plddt_acceptable'] = paper['plddt'][0]
+    THRESHOLD_LABELS['ipae']  = paper['ipae'][1]
+    THRESHOLD_LABELS['ddg']   = paper['ddg'][1]
+    THRESHOLD_LABELS['sap']   = paper['sap'][1]
+    THRESHOLD_LABELS['cms']   = paper['cms'][1]
+    THRESHOLD_LABELS['plddt'] = paper['plddt'][1]
 
 # RFpeptides pipeline stages
 PIPELINE_STAGES = [
@@ -114,12 +195,22 @@ def get_color_for_value(value, threshold_good, threshold_acceptable, higher_is_b
 
 
 def simplify_design_id(name: str) -> str:
-    """Simplify design ID for display."""
-    if isinstance(name, str):
-        if name.startswith('design_'):
-            return name.replace('design_', '').lstrip('0') or '0'
-        return name
-    return str(name)
+    """Simplify design ID for table display.
+
+    Strips RFpeptides' verbose `_cyclic_epitope` / `_cyclic` infix while keeping
+    the target prefix and design index intact. Examples:
+        2PQK_MCL1_cyclic_epitope_75      -> 2PQK_MCL1_75
+        RbtA_monomer_relaxed_cyclic_75   -> RbtA_monomer_relaxed_75
+        design_007                        -> 7
+    """
+    if not isinstance(name, str):
+        return str(name)
+    if name.startswith('design_'):
+        return name.replace('design_', '').lstrip('0') or '0'
+    # Strip the longer pattern first to avoid leaving a stray '_epitope'.
+    for token in ('_cyclic_epitope', '_cyclic', '_epitope'):
+        name = name.replace(token, '')
+    return name
 
 
 # ============================================================
@@ -228,8 +319,13 @@ def calculate_composite_score(df: pd.DataFrame) -> pd.Series:
 # ============================================================
 
 def plot_violin_strip(values, title, ylabel, thresholds, higher_is_better=True,
-                      palette_idx=0, output_path=None):
-    """Create a violin + strip + box distribution plot."""
+                      palette_idx=0, output_path=None,
+                      threshold_labels=('Excellent (tighter)', 'Paper threshold')):
+    """Create a violin + strip + box distribution plot.
+
+    `thresholds` is (good, acceptable). `threshold_labels` is the legend text
+    for each line — second label is shown bold (the paper-aligned cutoff).
+    """
     fig, ax = simple_ax(figsize=FIGSIZE)
 
     parts = ax.violinplot(values, positions=[0], showmeans=False,
@@ -252,8 +348,12 @@ def plot_violin_strip(values, title, ylabel, thresholds, higher_is_better=True,
     ax.scatter(jitter, values, c=colors, s=40, alpha=0.7, edgecolors='white',
                linewidth=0.5, zorder=3)
 
-    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.7, linewidth=1)
-    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='--', alpha=0.7, linewidth=1)
+    # Paper-aligned cutoff (solid, prominent); excellent context line (dashed, faint).
+    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='-', alpha=0.85,
+               linewidth=1.4, label=f"{threshold_labels[1]} ({thresholds[1]:g})")
+    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.55,
+               linewidth=1.0, label=f"{threshold_labels[0]} ({thresholds[0]:g})")
+    ax.legend(loc='lower left', fontsize=7, frameon=True, framealpha=0.9)
 
     median = np.median(values)
     mean = np.mean(values)
@@ -275,7 +375,8 @@ def plot_violin_strip(values, title, ylabel, thresholds, higher_is_better=True,
 
 
 def _plot_violin_strip_ax(ax, values, title, ylabel, thresholds, higher_is_better=True,
-                           palette_idx=0):
+                           palette_idx=0,
+                           threshold_labels=('Excellent', 'Paper threshold')):
     """Internal: Plot violin + strip distribution on a given axis (for merged figure)."""
     parts = ax.violinplot(values, positions=[0], showmeans=False,
                           showmedians=False, showextrema=False)
@@ -297,8 +398,11 @@ def _plot_violin_strip_ax(ax, values, title, ylabel, thresholds, higher_is_bette
     ax.scatter(jitter, values, c=colors, s=30, alpha=0.7, edgecolors='white',
                linewidth=0.4, zorder=3)
 
-    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.7, linewidth=1)
-    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='--', alpha=0.7, linewidth=1)
+    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='-', alpha=0.85,
+               linewidth=1.2, label=f"{threshold_labels[1]} ({thresholds[1]:g})")
+    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.55,
+               linewidth=0.9, label=f"{threshold_labels[0]} ({thresholds[0]:g})")
+    ax.legend(loc='lower left', fontsize=6, frameon=True, framealpha=0.9)
 
     median = np.median(values)
     mean = np.mean(values)
@@ -323,7 +427,8 @@ def plot_ddg_distribution(df, output_path=None):
         df['ddg'].values, 'Binding Energy (ddG)',
         'ddG (REU, more negative = better)',
         (QUALITY_THRESHOLDS['ddg_good'], QUALITY_THRESHOLDS['ddg_acceptable']),
-        higher_is_better=False, palette_idx=0, output_path=output_path)
+        higher_is_better=False, palette_idx=0, output_path=output_path,
+        threshold_labels=('Excellent ddG', THRESHOLD_LABELS['ddg']))
 
 
 def plot_ipae_distribution(df, output_path=None):
@@ -337,7 +442,8 @@ def plot_ipae_distribution(df, output_path=None):
         values, 'Interface iPAE',
         'iPAE (lower is better)',
         (QUALITY_THRESHOLDS['ipae_good'], QUALITY_THRESHOLDS['ipae_acceptable']),
-        higher_is_better=False, palette_idx=1, output_path=output_path)
+        higher_is_better=False, palette_idx=1, output_path=output_path,
+        threshold_labels=('Strict iPAE', THRESHOLD_LABELS['ipae']))
 
 
 def plot_plddt_distribution(df, output_path=None):
@@ -351,7 +457,8 @@ def plot_plddt_distribution(df, output_path=None):
         values, 'pLDDT Distribution',
         'pLDDT (higher is better)',
         (QUALITY_THRESHOLDS['plddt_good'], QUALITY_THRESHOLDS['plddt_acceptable']),
-        higher_is_better=True, palette_idx=2, output_path=output_path)
+        higher_is_better=True, palette_idx=2, output_path=output_path,
+        threshold_labels=('Excellent pLDDT', THRESHOLD_LABELS['plddt']))
     fig.axes[0].set_ylim(min(values) - 0.05, 1.05)
     if output_path:
         save_for_pub(fig, output_path)
@@ -369,7 +476,8 @@ def plot_sap_distribution(df, output_path=None):
         values, 'Aggregation Propensity (SAP)',
         'SAP (lower is better)',
         (QUALITY_THRESHOLDS['sap_good'], QUALITY_THRESHOLDS['sap_acceptable']),
-        higher_is_better=False, palette_idx=3, output_path=output_path)
+        higher_is_better=False, palette_idx=3, output_path=output_path,
+        threshold_labels=('Strict SAP', THRESHOLD_LABELS['sap']))
 
 
 def plot_cms_distribution(df, output_path=None):
@@ -383,7 +491,8 @@ def plot_cms_distribution(df, output_path=None):
         values, 'Contact Molecular Surface (CMS)',
         'CMS (\u00c5\u00b2, higher is better)',
         (QUALITY_THRESHOLDS['cms_good'], QUALITY_THRESHOLDS['cms_acceptable']),
-        higher_is_better=True, palette_idx=4, output_path=output_path)
+        higher_is_better=True, palette_idx=4, output_path=output_path,
+        threshold_labels=('Excellent CMS', THRESHOLD_LABELS['cms']))
 
 
 def plot_quality_scatter(df, output_path=None):
@@ -396,17 +505,20 @@ def plot_quality_scatter(df, output_path=None):
     scatter = ax.scatter(df['ddg'], df['iPAE'], c=scores, cmap='viridis',
                         s=80, alpha=0.8, edgecolors='white', linewidth=0.5)
 
+    # Shaded region = passes BOTH paper-aligned cutoffs (ddG and iPAE).
     ddg_min = min(df['ddg'].min() * 1.1, -80)
+    ddg_cut = QUALITY_THRESHOLDS['ddg_acceptable']
+    ipae_cut = QUALITY_THRESHOLDS['ipae_acceptable']
     rect_good = Rectangle((ddg_min, 0),
-                          QUALITY_THRESHOLDS['ddg_good'] - ddg_min,
-                          QUALITY_THRESHOLDS['ipae_good'],
-                          linewidth=0, facecolor=CAT_PALETTE[2], alpha=0.1)
+                          ddg_cut - ddg_min, ipae_cut,
+                          linewidth=0, facecolor=CAT_PALETTE[2], alpha=0.12)
     ax.add_patch(rect_good)
 
-    ax.axvline(x=QUALITY_THRESHOLDS['ddg_good'], color=CAT_PALETTE[2],
-               linestyle='--', alpha=0.5, linewidth=1)
-    ax.axhline(y=QUALITY_THRESHOLDS['ipae_good'], color=CAT_PALETTE[2],
-               linestyle='--', alpha=0.5, linewidth=1)
+    ax.axvline(x=ddg_cut, color=CAT_PALETTE[2], linestyle='-', alpha=0.85,
+               linewidth=1.4, label=f"{THRESHOLD_LABELS['ddg']} ({ddg_cut:g})")
+    ax.axhline(y=ipae_cut, color=CAT_PALETTE[1], linestyle='-', alpha=0.85,
+               linewidth=1.4, label=f"{THRESHOLD_LABELS['ipae']} ({ipae_cut:g})")
+    ax.legend(loc='upper right', fontsize=7, frameon=True, framealpha=0.9)
 
     ax.set_title('ddG vs iPAE', fontsize=14, fontweight='bold', pad=12)
     ax.set_xlabel('ddG (REU, more negative = better)', fontsize=11)
@@ -620,11 +732,16 @@ def plot_execution_timeline(results_dir, output_path=None):
 # Entry Points
 # ============================================================
 
-def create_separate_figures(results_dir: str, output_prefix: str = None):
+def create_separate_figures(results_dir: str, output_prefix: str = None,
+                             target: str = None):
     """Create separate visualization figures for RFpeptides pipeline."""
     results_dir = Path(results_dir)
     if output_prefix is None:
         output_prefix = str(results_dir / "rfpeptides")
+
+    target = target or detect_target(results_dir)
+    configure_thresholds(target)
+    print(f"Using paper thresholds for target: {target}")
 
     set_pub_plot_context(context="talk")
     df = load_design_metrics(results_dir)
@@ -655,7 +772,8 @@ def create_separate_figures(results_dir: str, output_prefix: str = None):
     return saved_files
 
 
-def create_merged_figure(results_dir: str, output_prefix: str = None):
+def create_merged_figure(results_dir: str, output_prefix: str = None,
+                          target: str = None):
     """Create a single merged figure with key panels in 3x3 grid.
 
     Layout:
@@ -666,6 +784,10 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
     results_dir = Path(results_dir)
     if output_prefix is None:
         output_prefix = str(results_dir / "rfpeptides_summary")
+
+    target = target or detect_target(results_dir)
+    configure_thresholds(target)
+    print(f"Using paper thresholds for target: {target}")
 
     set_pub_plot_context(context="talk")
     df = load_design_metrics(results_dir)
@@ -682,25 +804,32 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
     _plot_violin_strip_ax(axes[0], df['ddg'].values, 'ddG Distribution',
                           'ddG (REU)',
                           (QUALITY_THRESHOLDS['ddg_good'], QUALITY_THRESHOLDS['ddg_acceptable']),
-                          higher_is_better=False, palette_idx=0)
+                          higher_is_better=False, palette_idx=0,
+                          threshold_labels=('Excellent ddG', THRESHOLD_LABELS['ddg']))
 
     if 'iPAE' in df.columns:
         _plot_violin_strip_ax(axes[1], df['iPAE'].dropna().values, 'iPAE Distribution',
                               'iPAE',
                               (QUALITY_THRESHOLDS['ipae_good'], QUALITY_THRESHOLDS['ipae_acceptable']),
-                              higher_is_better=False, palette_idx=1)
+                              higher_is_better=False, palette_idx=1,
+                              threshold_labels=('Strict iPAE', THRESHOLD_LABELS['ipae']))
     else:
         axes[1].text(0.5, 0.5, 'No iPAE data', ha='center', va='center', transform=axes[1].transAxes)
         axes[1].axis('off')
 
-    # Quality scatter
+    # Quality scatter — paper-aligned cutoffs (solid lines + legend).
     if 'iPAE' in df.columns:
         scores = calculate_composite_score(df)
         scatter = axes[2].scatter(df['ddg'], df['iPAE'], c=scores, cmap='viridis',
                                   s=40, alpha=0.8, edgecolors='white', linewidth=0.4)
-        axes[2].axvline(x=QUALITY_THRESHOLDS['ddg_good'], color=CAT_PALETTE[2], linestyle='--', alpha=0.5)
-        axes[2].axhline(y=QUALITY_THRESHOLDS['ipae_good'], color=CAT_PALETTE[2], linestyle='--', alpha=0.5)
-        axes[2].set_title('ddG vs iPAE', fontsize=10, fontweight='bold', pad=8)
+        ddg_cut = QUALITY_THRESHOLDS['ddg_acceptable']
+        ipae_cut = QUALITY_THRESHOLDS['ipae_acceptable']
+        axes[2].axvline(x=ddg_cut, color=CAT_PALETTE[2], linestyle='-', alpha=0.85,
+                        linewidth=1.2, label=f"ddG<{ddg_cut:g}")
+        axes[2].axhline(y=ipae_cut, color=CAT_PALETTE[1], linestyle='-', alpha=0.85,
+                        linewidth=1.2, label=f"iPAE<{ipae_cut:g}")
+        axes[2].legend(loc='upper right', fontsize=6, frameon=True, framealpha=0.9)
+        axes[2].set_title('ddG vs iPAE (paper cutoffs)', fontsize=10, fontweight='bold', pad=8)
         axes[2].set_xlabel('ddG', fontsize=8)
         axes[2].set_ylabel('iPAE', fontsize=8)
         plt.colorbar(scatter, ax=axes[2], shrink=0.8, label='Score')
@@ -713,7 +842,8 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
         vals = df['pLDDT'].dropna().values
         _plot_violin_strip_ax(axes[3], vals, 'pLDDT', 'pLDDT',
                               (QUALITY_THRESHOLDS['plddt_good'], QUALITY_THRESHOLDS['plddt_acceptable']),
-                              higher_is_better=True, palette_idx=2)
+                              higher_is_better=True, palette_idx=2,
+                              threshold_labels=('Excellent pLDDT', THRESHOLD_LABELS['plddt']))
         axes[3].set_ylim(min(vals) - 0.05, 1.05)
     else:
         axes[3].text(0.5, 0.5, 'No data', ha='center', va='center', transform=axes[3].transAxes)
@@ -722,7 +852,8 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
     if 'sap' in df.columns:
         _plot_violin_strip_ax(axes[4], df['sap'].dropna().values, 'SAP', 'SAP',
                               (QUALITY_THRESHOLDS['sap_good'], QUALITY_THRESHOLDS['sap_acceptable']),
-                              higher_is_better=False, palette_idx=3)
+                              higher_is_better=False, palette_idx=3,
+                              threshold_labels=('Strict SAP', THRESHOLD_LABELS['sap']))
     else:
         axes[4].text(0.5, 0.5, 'No data', ha='center', va='center', transform=axes[4].transAxes)
         axes[4].axis('off')
@@ -730,7 +861,8 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
     if 'cms' in df.columns:
         _plot_violin_strip_ax(axes[5], df['cms'].dropna().values, 'CMS', 'CMS (\u00c5\u00b2)',
                               (QUALITY_THRESHOLDS['cms_good'], QUALITY_THRESHOLDS['cms_acceptable']),
-                              higher_is_better=True, palette_idx=4)
+                              higher_is_better=True, palette_idx=4,
+                              threshold_labels=('Excellent CMS', THRESHOLD_LABELS['cms']))
     else:
         axes[5].text(0.5, 0.5, 'No data', ha='center', va='center', transform=axes[5].transAxes)
         axes[5].axis('off')
@@ -849,18 +981,22 @@ def main():
                         help='Output prefix (default: results_dir/rfpeptides)')
     parser.add_argument('--merged', '-m', action='store_true',
                         help='Create merged 3x3 summary figure instead of separate figures')
+    parser.add_argument('--target', '-t', type=str, default=None,
+                        choices=['mcl1', 'mdm2', 'gabarap', 'rbta', 'general'],
+                        help='Target name for paper-faithful thresholds '
+                             '(default: auto-detect from results path)')
 
     args = parser.parse_args()
 
     if args.merged:
-        output_file = create_merged_figure(args.results_dir, args.output)
+        output_file = create_merged_figure(args.results_dir, args.output, target=args.target)
         if output_file:
             print(f"\nVisualization complete: {output_file}")
         else:
             print("\nVisualization failed")
             exit(1)
     else:
-        output_files = create_separate_figures(args.results_dir, args.output)
+        output_files = create_separate_figures(args.results_dir, args.output, target=args.target)
         if output_files:
             print(f"\nVisualization complete!")
         else:
