@@ -57,11 +57,38 @@ PHASE 3: Final Selection & Ranking
 
 ### Input Requirements
 
-- **KRAS target PDB file** — properly formatted protein structure
-- **KRAS protein sequence** — for Boltz-2 and AlphaFold3 input
-- **Pre-computed KRAS MSA** (`.a3m` file) — pre-computed A3M alignment of the KRAS target sequence. Providing this skips the slow MSA search step (~30-60 min) in both Boltz-2 and AlphaFold3, dramatically speeding up Phase 2. Generate once with MMseqs2 or the AF3 data pipeline.
-- **Prior model file** (`.pt`) — default: `examples/data/models/prior/perm_agent_final.pt` (permeability-pretrained, vocab=76, n_embd=256, 8-layer GPT). Requires matching `.json` config file at same path.
+- **Target FASTA file** (`target.fasta`) — single-record FASTA of the target's catalytic domain (case3 ships `examples/case3_kras_perm_opt_helmgpt/target.fasta` for KRAS-G12D 1-165). Step 0 below uses this to generate the pre-computed MSA via Boltz-2 + MMseqs2; the resulting `target.a3m` is reused by every Phase-2 Boltz-2 / AF3 call so they skip the slow MSA search (~30-60 min savings per candidate).
+- **Target PDB file** — properly formatted protein structure (used as Gnina receptor in Phase 2). Boltz-2 also writes a predicted PDB during Step 0 if you don't have one already.
+- **Run / output directory** — defaults to `results/<case_name>/` (case3: `results/case3_kras_helmgpt/`). All Step-0/Phase-1/Phase-2/Phase-3 artifacts land here so the run is self-contained.
+- **Prior model file** (`.pt`) — case3 ships a permeability-pretrained prior at `examples/case3_kras_perm_opt_helmgpt/perm_prior/gpt_model_final_0.105.pt` (vocab=76, n_embd=256, 8-layer GPT, matching `.json` config alongside). Stage it into the MCP cache via Step 1.0 below.
+- **Predictor models & monomer library** — case3 also includes `rl_predictors/{kras_kd,perm}/*.pkl` and `monomer_library.csv`. These are byte-identical (md5-verified) to the predictors baked into `helm_gpt_mcp`'s container, so RL optimization picks them up automatically — no extra staging required. The `setup_case3.py` helper verifies parity. If you ever swap in a different predictor pickle, pass its container path via the `model_path` argument exposed on `predict_permeability`, `predict_kras_binding`, and the matching `submit_*_batch` tools.
 - Desired binder length (typically 7-20 residues)
+
+---
+
+## Step 0: Generate Target MSA (`target.a3m`)
+
+Run a **single** Boltz-2 prediction with the MSA server enabled to fetch the target's MMseqs2 alignment from `api.colabfold.com`. Boltz-2 writes the merged a3m alongside its output structure; we copy it out to a stable name for reuse. This step costs ~5-10 min once (MSA fetch ~5-60 s + structure inference ~15 s + I/O); after that, every Phase-2 Boltz-2 / AF3 call passes `msa_path=target.a3m` instead of querying MMseqs2 again.
+
+**Inputs**
+- `target.fasta` (single-record FASTA, the target's catalytic-domain sequence — case3: KRAS-G12D 1-165)
+- Output directory (default `results/case3_kras_helmgpt/`)
+
+**Helper (case3-bundled)** — runs Boltz-2 directly via the MCP's local env, extracts the merged a3m, and copies it to `<output_dir>/target.a3m`:
+
+```bash
+bash examples/case3_kras_perm_opt_helmgpt/run_target_msa.sh \
+  examples/case3_kras_perm_opt_helmgpt/target.fasta \
+  results/case3_kras_helmgpt
+```
+
+**MCP-tool equivalent** (when the `boltz_mcp` container is available): call `mcp__boltz_mcp__simple_structure_prediction` with `sequence=<target FASTA seq>`, `use_msa_server=True`, `output_dir=results/case3_kras_helmgpt/target_msa_run`, then locate the resulting `boltz_results_*/msa/*_unpaired_tmp_env/bfd.mgnify30.metaeuk30.smag30.a3m` and copy it to `results/case3_kras_helmgpt/target.a3m`.
+
+**Outputs**
+- `results/case3_kras_helmgpt/target.a3m` — query record's first line is the `target.fasta` sequence; followed by ~9 000-15 000 homolog records. Pass this to Phase 2 via `msa_path=` (Boltz-2) and `unpairedMsaPath` (AF3 input.json).
+- `results/case3_kras_helmgpt/target_msa_run/boltz_results_*/predictions/...` — predicted target PDB (free byproduct, usable as Gnina receptor in Phase 2).
+
+> **Sanity check:** `awk 'NR==2 {print substr($0,12,1); exit}' results/case3_kras_helmgpt/target.a3m` should print the residue at position 12 of your target — `D` for KRAS-G12D, `G` for WT KRAS. A mismatch with `target.fasta` means the wrong query was used.
 
 ---
 
@@ -78,6 +105,23 @@ HELM-GPT generates synthesizable macrocyclic peptides via reinforcement learning
 5. Update GPT model via REINVENT + CPL loss
 ```
 
+### Step 1.0: Stage Case3 Prior into the MCP Cache
+
+The case3 prior `gpt_model_final_0.105.pt` lives on the host but the `helm_gpt_mcp` server runs in Docker. The container reads-only-mounts `$MACROMNEX_CACHE/model/helmgpt/` at `/app/models/helmgpt/` (see `mcps.yaml` `cache_model` entry), so any `.pt`/`.json` placed in the host cache becomes visible to RL training.
+
+**Action:** run the helper script once:
+
+```bash
+python examples/case3_kras_perm_opt_helmgpt/setup_case3.py
+```
+
+It will:
+1. Copy `perm_prior/gpt_model_final_0.105.{pt,json}` into `$MACROMNEX_CACHE/model/helmgpt/` (idempotent via md5 check).
+2. Verify the case3 predictor pickles and `monomer_library.csv` match the baked-in MCP defaults.
+3. Print the **container path** to use for `prior_model` in Step 1.3: `/app/models/helmgpt/gpt_model_final_0.105.pt`.
+
+If parity verification reports a `[DIFF]`, the case3 predictors have diverged from the in-container defaults; in that case Step P1.3 / P1.4 below should pass `model_path=...` pointing at the case3 pickle to override.
+
 ### Step 1.1: Check Optimization Requirements
 
 **Tool:** `mcp__helmgpt_mcp__check_optimization_requirements`
@@ -90,7 +134,7 @@ HELM-GPT generates synthesizable macrocyclic peptides via reinforcement learning
 - `python_version`: Current Python version
 - `available_prior_models`: List of prior model `.pt` files
 
-**Action:** Ensure prior model, both scoring models (`kras_model` + `permeability_model`), and GPU are available before proceeding.
+**Action:** Ensure `gpt_model_final_0.105.pt` appears in `available_prior_models` (it will, once Step 1.0 has staged it into `MODELS_CACHE_DIR=/app/models/helmgpt`). Confirm both scoring models (`kras_model` + `permeability_model`) and GPU are also available before proceeding.
 
 ### Step 1.2: Review Available Optimization Tasks
 
@@ -111,9 +155,9 @@ HELM-GPT generates synthesizable macrocyclic peptides via reinforcement learning
 
 | Parameter | Recommended | Description |
 |-----------|-------------|-------------|
-| `prior_model` | Default: `examples/data/models/prior/perm_agent_final.pt` | Path to permeability-pretrained prior `.pt` file (must have matching `.json` config) |
+| `prior_model` | `/app/models/helmgpt/gpt_model_final_0.105.pt` (case3) | Container path to the permeability-pretrained prior `.pt` file. Staged via Step 1.0; matching `.json` config sits alongside. |
 | `task` | `"kras_perm"` | Multi-objective task: KRAS KD + permeability |
-| `output_dir` | (required) | Directory for results, checkpoints, generated sequences |
+| `output_dir` | `results/case3_kras_helmgpt/phase1_<YYYYMMDD_HHMMSS>` (default) | Directory for step CSVs, checkpoints, top sequences. Use a timestamped subdir under `results/<case_name>/` so multiple Phase-1 runs coexist; `postprocess_phase1.py` reads back from this same dir. |
 | `agent_model` | null | Optional path to existing agent model for continued training |
 | `n_steps` | 500 (max 1000) | RL steps. Start with 500; only increase to 1000 if reward has not converged |
 | `batch_size` | 32 | Sequences generated per step |
@@ -180,11 +224,19 @@ Sequential filtering pipeline using `helm_gpt_mcp` local tools to select top can
 
 **Action:** Remove any sequences that fail HELM validation (rare with properly trained prior).
 
-### Step P1.2: Convert HELM to SMILES
+### Step P1.2: Convert HELM to SMILES + Heavy-Atom Routing
 
-**Tool:** `mcp__helmgpt_mcp__helm_to_smiles` (synchronous) or `mcp__helmgpt_mcp__submit_helm_to_smiles_batch` (async, for >1000 sequences)
+**Recommended (case3 path):** run the bundled helper which combines HELM→SMILES, heavy-atom counting, Track A/B routing, and top-N capping in one shot:
 
-**Parameters:**
+```bash
+tool-mcps/helm_gpt_mcp/env_py3.7/bin/python \
+  examples/case3_kras_perm_opt_helmgpt/postprocess_phase2_prep.py \
+  results/case3_kras_helmgpt/phase1_<timestamp> --top 20
+```
+
+This calls the upstream `utils.helm_utils.get_cycpep_smi_from_helm` function directly (with the correct `cwd` swap so the 3105-monomer library loads), then RDKit for `mol.GetNumHeavyAtoms()`, then writes `phase2_candidates.csv` + `phase2_routing_summary.json`.
+
+**MCP-tool path** — `mcp__helmgpt_mcp__helm_to_smiles` (synchronous) or `mcp__helmgpt_mcp__submit_helm_to_smiles_batch` (async, for >1000 sequences):
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -195,6 +247,13 @@ Sequential filtering pipeline using `helm_gpt_mcp` local tools to select top can
 | `limit` | null | Maximum number of sequences to process |
 
 > Note: Either `helm_input` or `input_file` should be provided (mutually exclusive).
+>
+> **Known issue with the standalone CLI script:** `tool-mcps/helm_gpt_mcp/scripts/helm_to_smiles.py` invoked as `python scripts/helm_to_smiles.py …` silently falls back to a stub HELM→SMILES converter (the `lib.helm_utils_repo._load_repo_functions` import path doesn't trip when run as `__main__`), producing the same trivial 35-char SMILES (`CC(C)C[C@H](N)C(=O)N[C@@H](C)C(=O)N`) for every input. Use the `postprocess_phase2_prep.py` helper above (which imports the upstream function explicitly) **or** call the function via Python rather than CLI:
+> ```python
+> import sys, os; sys.path.insert(0, 'tool-mcps/helm_gpt_mcp/repo/helm-gpt')
+> os.chdir('tool-mcps/helm_gpt_mcp/repo/helm-gpt')  # for monomer_library.csv
+> from utils.helm_utils import get_cycpep_smi_from_helm
+> ```
 
 ### Step P1.3: Score Permeability (explicit verification)
 
@@ -210,6 +269,7 @@ Sequential filtering pipeline using `helm_gpt_mcp` local tools to select top can
 | `helm_column` | "HELM" | Column name in CSV |
 | `limit` | null | Maximum number of sequences to process |
 | `include_statistics` | true | Include summary statistics |
+| `model_path` | null | Override path to RF predictor pickle. Leave null to use the bundled default; for case3, only set if `setup_case3.py` reports a `[DIFF]` — e.g. `/app/examples/data/regression_rf.pkl` if you mounted the case3 pickle into `cache_data`. |
 
 > Note: Either `helm_input` or `input_file` should be provided.
 
@@ -228,6 +288,7 @@ Sequential filtering pipeline using `helm_gpt_mcp` local tools to select top can
 | `output_file` | null | Path to save KRAS binding predictions |
 | `helm_column` | "HELM" | Column name in CSV |
 | `limit` | null | Maximum number of sequences to process |
+| `model_path` | null | Override path to XGBoost predictor pickle. Leave null to use the bundled default; for case3, only set if `setup_case3.py` reports a `[DIFF]`. |
 
 **Output Fields:**
 - `binding_score`: Raw XGBoost binding score
@@ -301,6 +362,10 @@ phase2_candidates = all_candidates[:100]
 
 Candidates are evaluated through two parallel structural prediction and docking tracks. Track A (Boltz-2 SMILES affinity) runs only for candidates with ≤128 heavy atoms. Track B (AlphaFold3) runs for ALL candidates. Both tracks include Gnina docking on predicted complex structures.
 
+> **Track B optional when all candidates ≤128 atoms.** Boltz-2 affinity prediction (Track A) **also writes a complex PDB plus per-residue confidence** (`iptm`, `ligand_iptm`, `complex_plddt`). For small peptides this is functionally equivalent to AF3's complex output, so Track B is **redundant and can be skipped** if every passing candidate is already routed to Track A (which is the case in case3: 20 candidates, max 93 heavy atoms). In that mode, use Boltz-2's `iptm` in place of AF3's iPTM in the Phase-3 composite, and run Gnina on the Boltz-2 complex.
+>
+> **AF3 local install caveat.** The `tool-mcps/alphafold3_mcp/repo/alphafold3` clone needs its `alphafold3.cpp` C extension built (`cd repo/alphafold3 && cmake -B build && cmake --build build`) — without it `from alphafold3.cpp import cif_dict` fails and Track B aborts. The Docker image bakes this in; the local env does not by default. If Track B is essential (e.g. >128-atom candidates), build the extension or use the Docker image.
+
 ### Track A: Boltz-2 SMILES Affinity (candidates ≤128 heavy atoms)
 
 Boltz-2 affinity prediction treats the cyclic peptide as a small molecule ligand (SMILES input), preserving exact ncAA chemistry (N-methylation, D-amino acids, non-standard caps) that protein-chain input cannot represent. Produces 3-head ensemble affinity predictions.
@@ -313,15 +378,16 @@ Boltz-2 affinity prediction treats the cyclic peptide as a small molecule ligand
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `protein_sequence` | KRAS protein sequence (165 aa) | Full-length target sequence |
+| `protein_sequence` | Target sequence (case3: KRAS-G12D 1-165, 165 aa — read from `target.fasta`) | Full-length target sequence |
 | `ligand_smiles` | Cyclic peptide SMILES | From HELM→SMILES conversion (Step P1.2) |
 | `use_msa_server` | false | Set to false when providing pre-computed MSA |
-| `msa_path` | Path to pre-computed KRAS `.a3m` | Pre-computed target MSA (from Prerequisites) |
+| `msa_path` | `results/case3_kras_helmgpt/target.a3m` | Pre-computed target MSA generated in Step 0 |
+| `output_dir` | `results/case3_kras_helmgpt/phase2_track_a/<candidate_id>` | Per-candidate output dir under the run root |
 | `output_format` | `"pdb"` | PDB output for downstream Gnina docking |
 | `accelerator` | `"gpu"` | GPU acceleration |
 | `job_name` | (optional) | Candidate tracking name |
 
-> **Pre-computed MSA:** Provide the pre-computed KRAS `.a3m` file (from Prerequisites) via `msa_path` for all candidates. This skips the slow MSA server query and reduces per-candidate runtime from ~8-15 min to ~2-5 min. Set `use_msa_server=false` since `msa_path` takes precedence.
+> **Pre-computed MSA:** Provide the Step-0 `.a3m` file via `msa_path` for all candidates. This skips the MSA server query and reduces per-candidate runtime from ~8-15 min to ~2-5 min. Set `use_msa_server=false` since `msa_path` takes precedence. The first record of `target.a3m` MUST match the `protein_sequence` argument — if you use a different target variant, regenerate the a3m via Step 0 first.
 
 #### Step 2A.2: Monitor & Collect Affinity Metrics
 
@@ -389,9 +455,9 @@ AlphaFold3 predicts the protein-ligand complex structure for all candidates. Usi
 
 #### Step 2B.1: Prepare AF3 Input with Pre-computed MSA
 
-Each candidate needs an `input.json` that references the pre-computed KRAS MSA (`.a3m` file from Prerequisites) and includes the cyclic peptide as a ligand SMILES. This avoids re-running the slow MSA search for every candidate.
+Each candidate needs an `input.json` that references the **Step-0 target MSA** (`results/<case>/target.a3m`) and includes the cyclic peptide as a ligand SMILES. This avoids re-running the slow MSA search for every candidate.
 
-**Input JSON template** (one per candidate):
+**Input JSON template** (one per candidate; case3 paths shown):
 ```json
 {
   "name": "candidate_001",
@@ -399,8 +465,8 @@ Each candidate needs an `input.json` that references the pre-computed KRAS MSA (
     {
       "protein": {
         "id": "A",
-        "sequence": "KRAS_SEQUENCE_HERE",
-        "unpairedMsaPath": "/path/to/kras_target.a3m"
+        "sequence": "MTEYKLVVVGADGVGKSALTIQLIQNHFVDEYDPTIEDSYRKQVVIDGETCLLDILDTAGQEEYSAMRDQYMRTGEGFLCVFAINNTKSFEDIHHYREQIKRVKDSEDVPMVLVGNKCDLPSRTVDTKQAQDLARSYGIPFIETSAKTRQRVEDAFYTLVREIRQ",
+        "unpairedMsaPath": "results/case3_kras_helmgpt/target.a3m"
       }
     },
     {
@@ -435,7 +501,7 @@ Each candidate needs an `input.json` that references the pre-computed KRAS MSA (
 
 #### Step 2B.3: Batch Processing (recommended for ≤100 candidates)
 
-Prepare `input.json` files in per-candidate subdirectories, each referencing the same pre-computed KRAS MSA. Use batch prediction to process all candidates efficiently (model loaded once, reused across predictions).
+Prepare `input.json` files in per-candidate subdirectories, each referencing the same Step-0 `target.a3m`. Use batch prediction to process all candidates efficiently (model loaded once, reused across predictions).
 
 **Tool:** `mcp__alphafold3_mcp__af3_predict_batch`
 
@@ -451,13 +517,14 @@ Prepare `input.json` files in per-candidate subdirectories, each referencing the
 
 **Expected directory structure (≤100 candidates):**
 ```
-af3_inputs/
-├── candidate_001/
-│   └── input.json    # references kras_target.a3m via unpairedMsaPath
-├── candidate_002/
-│   └── input.json
-└── ...
-    └── input.json    # max 100 candidates (capped in Step P1.7)
+results/case3_kras_helmgpt/
+├── target.a3m                # Step 0 output, referenced by every input.json
+└── phase2_track_b/af3_inputs/
+    ├── candidate_001/
+    │   └── input.json        # unpairedMsaPath -> ../../target.a3m
+    ├── candidate_002/
+    │   └── input.json
+    └── ...                   # max 100 candidates (capped in Step P1.7)
 ```
 
 #### Step 2B.4: Collect AF3 Confidence Metrics
@@ -496,9 +563,9 @@ af3_inputs/
 
 ### Composite Scoring
 
-Two scoring tables depending on heavy atom routing:
+Two weight schemes depending on heavy-atom routing. **`postprocess_phase3.py` implements the ≤128-atom scheme**, which is also what the visualization reads from `phase3_final_ranking.csv`'s `composite` column. Each metric is min-max normalized within the candidate set before the weighted sum, so the final composite is on a 0–1 scale (1 = best on every metric in this run, 0 = worst on every metric).
 
-**Candidates ≤128 heavy atoms (Boltz-2 + AF3 + Gnina):**
+**Candidates ≤128 heavy atoms (Boltz-2 + AF3 + Gnina) — also used as fallback when AF3 is skipped (Boltz-2 iPTM substitutes for AF3 iPTM):**
 
 | Metric | Weight | Source | Direction |
 |--------|--------|--------|-----------|
@@ -506,7 +573,7 @@ Two scoring tables depending on heavy atom routing:
 | Permeability (log cm/s) | 0.15 | HELM-GPT RF | Higher is better |
 | Boltz-2 ensemble avg affinity | 0.15 | Boltz-2 SMILES | Higher is better |
 | Boltz-2 ensemble avg prob | 0.10 | Boltz-2 SMILES | Higher is better |
-| AF3 iPTM | 0.10 | AlphaFold3 | Higher is better |
+| AF3 iPTM (or Boltz-2 ligand_iptm fallback) | 0.10 | AlphaFold3 / Boltz-2 | Higher is better |
 | Gnina CNN affinity (best of Track A/B) | 0.15 | Gnina | Higher is better |
 | Gnina Vina score (best of Track A/B) | 0.15 | Gnina | More negative is better |
 
@@ -520,12 +587,65 @@ Two scoring tables depending on heavy atom routing:
 | Gnina CNN affinity | 0.20 | Gnina | Higher is better |
 | Gnina Vina score | 0.20 | Gnina | More negative is better |
 
+> **Single source of truth.** `helmgpt_viz.py.calculate_composite_score` first looks for the `composite` column in the input dataframe (written by `postprocess_phase3.py`) and uses that directly; the viz only recomputes when the column is absent (legacy / partial runs). This avoids the previous discrepancy between the table's `Score` cell and `phase3_summary.json`'s composite values — they're now identical by construction.
+
 ### Selection Strategy
 
 - Select top 5-10 designs for experimental testing
 - Ensure structural diversity (different binding modes / ncAA compositions)
-- Prioritize designs with strong Gnina docking scores AND good AF3 confidence
+- Prioritize designs with strong Gnina docking scores AND good Boltz-2 / AF3 confidence
 - Include 1-2 designs with novel ncAA scaffolds for chemical diversity
+
+---
+
+## Phase 3.5: Visualization
+
+After Phase 3 ranking, generate publication-quality figures with `workflow-skills/scripts/helmgpt/helmgpt_viz.py`. The script reads `phase3_final_ranking.csv` (consolidated case3 schema) or the legacy multi-file layout and emits PDF + PNG for every panel. Threshold lines on every distribution plot are pulled directly from the **Quality Thresholds Reference Table** below — solid prominent line = workflow PASS gate, dashed faint line = "Excellent" tier — keeping the figures self-documenting.
+
+**Invocation:**
+
+```bash
+# Separate per-metric figures (default)
+python workflow-skills/scripts/helmgpt/helmgpt_viz.py \
+  results/<case_name>/phase1_<timestamp>
+
+# Single 3x3 summary panel
+python workflow-skills/scripts/helmgpt/helmgpt_viz.py \
+  results/<case_name>/phase1_<timestamp> --merged
+```
+
+**Figures produced** (each as `helmgpt_<name>.{png,pdf}`):
+
+| # | File suffix | Content |
+|---|---|---|
+| 1 | `kd_distribution` | KD violin + strip with workflow gate at 10 μM and Excellent line at 1 μM |
+| 2 | `perm_distribution` | Permeability violin + strip with workflow gate at −6.0 and Excellent line at −5.0 |
+| 3 | `quality_scatter` | KD vs permeability scatter, points colored by composite score; PASS region shaded |
+| 4 | `af3_iptm` | AF3 iPTM (or Boltz-2 ligand iPTM substitute when AF3 wasn't run) |
+| 5 | `gnina_cnn` | Gnina CNN affinity (pKd) with workflow gate at 6.0, Excellent at 7.0 |
+| 6 | `gnina_vina` | Gnina Vina (kcal/mol) with workflow gate at −7.0, Excellent at −8.0 |
+| 7 | `boltz_affinity` | Boltz-2 ensemble affinity with workflow gate at 0.0, Excellent at 0.5 |
+| 8 | `boltz_probability` | Boltz-2 binding probability with workflow gate at 0.5, Excellent at 0.6 |
+| 9 | `composite_score` | Final composite score distribution (Phase 3 ranking) |
+| 10 | **`radar_chart`** | **Spider/radar of top 5 candidates across all 7 composite metrics — see below** |
+| 11 | `metrics_table` | Three-line academic-style table of top 6 by composite |
+| 12 | `execution_timeline` | Gantt of pipeline phases (Phase 1 → Phase 3) |
+| 13 | `summary` | Combined 3×3 panel of the most informative subset (use `--merged`) |
+
+### Radar Chart (Spider Plot) — Top Candidates Multi-Metric Profile
+
+Renders the top-N (default 5) candidates as overlapping polygons across the **5 strongest discriminating metrics**: **KD, Permeability, AF3 iPTM (or Boltz iPTM substitute), Gnina CNN, Gnina Vina**. (Boltz-2 affinity / probability are excluded — they're noisy ensemble heads that overlap with the Gnina + iPTM information already on the chart, and adding them clutters the polygon without adding orthogonal signal. They remain on their own per-metric distribution plots.)
+
+**Normalization:** each axis is min-max normalized **across the full candidate set** (not against absolute thresholds), so each metric uses the full 0–1 radial range and small differences between top hits remain visible. Lower-is-better metrics (KD, Vina) are inverted so **outer edge = better** on every axis.
+
+**Reference polygon:** a faint gray dashed polygon shows the **set median** on each axis — at-a-glance "is this candidate above or below the pack?"
+
+**Interpretation:**
+- A polygon hugging the outer edge on most axes is a balanced top design.
+- An asymmetric polygon (e.g. excellent Gnina but poor Boltz prob) flags risk of single-method bias — check the underlying scores in `phase3_final_ranking.csv`.
+- The set-median reference shows which axes are tightly clustered (median near outer ring = all candidates are good there) vs. spread out (median near center = differentiating axis).
+
+This view complements the individual distribution plots (Figures 1–8) by showing **per-candidate balance across all metrics simultaneously** — useful for the final "which 5–10 to synthesize?" decision in Phase 3.
 
 ---
 
@@ -659,6 +779,41 @@ Generate diverse KRAS binder candidates using HELM-GPT:
 - Gnina docking on all predicted complexes
 - Composite score ranking → top 10 diverse designs
 ```
+
+---
+
+## Reproducible Scripts (case3-bundled)
+
+All helpers live under `examples/case3_kras_perm_opt_helmgpt/` and are pure Python or bash with no extra deps beyond what each MCP's local env already installs. Run them in order from the project root:
+
+| # | Script | Phase | Purpose |
+|---|---|---|---|
+| 0 | `setup_case3.py` | Pre-Phase 1 | Stages the case3 prior `gpt_model_final_0.105.{pt,json}` into `$MACROMNEX_CACHE/model/helmgpt/` (mounted into the helm_gpt_mcp container at `/app/models/helmgpt/`); md5-verifies the bundled predictor pickles + monomer library against the in-MCP defaults. Idempotent. |
+| 0 | `run_target_msa.sh <target.fasta> <out_dir>` | Step 0 | Wraps Boltz-2 (`tool-mcps/boltz_mcp/env/bin/boltz predict --use_msa_server`) on a target FASTA, extracts the merged `bfd.mgnify30.metaeuk30.smag30.a3m`, and copies it to `<out_dir>/target.a3m`. Produces a predicted target PDB as a free byproduct. |
+| 1 | (built-in MCP tool) `submit_optimize_peptides` | Phase 1 | RL co-optimization. Output dir conventionally `results/<case>/phase1_<YYYYMMDD_HHMMSS>`. |
+| 1 | `postprocess_phase1.py <run_dir>` | Post-Phase 1 | Aggregates all `step_*_aa_seqs.csv`, drops parser-failed rows (sentinel `raw_permeability=-10` / `raw_kras_kd=5`), deduplicates by HELM, applies the workflow PASS gate (perm > −6, KD < 10 μM), writes `phase1_aggregated.csv` + `phase1_filtered.csv` + `phase1_summary.json`. |
+| 1 | `postprocess_phase2_prep.py <run_dir> --top N` | Post-Phase 1 | HELM→SMILES via upstream `get_cycpep_smi_from_helm`, heavy-atom count via RDKit, Track A/B routing at 128-atom threshold, capping to top-N (default 20). Writes `phase2_candidates.csv` + `phase2_routing_summary.json`. **Bypasses the broken `helm_to_smiles.py` CLI wrapper** (see Step P1.2). |
+| 2A | `run_phase2_track_a.sh <run_dir>` | Phase 2 Track A | Boltz-2 affinity prediction × N candidates with `msa_path=target.a3m`. Per-candidate YAML + `boltz predict` invocation; ~2 min/candidate cached, ~40 min for 20. Writes `phase2_track_a/c_<rank>_<smi8>/boltz_results_input/...` + aggregate `track_a_results.csv`. |
+| 2B | `run_phase2_track_b.sh <run_dir> [device]` | Phase 2 Track B | AF3 prediction × N candidates with `unpairedMsaPath=target.a3m`. **Requires AF3 cpp extension built** (Docker image or local rebuild). Skipped automatically when all candidates ≤128 atoms (Track A's Boltz-2 complex covers it). |
+| 2 | `run_phase2_gnina.sh <run_dir> [device]` | Phase 2 docking | Splits chain A (receptor) and chain B/HETATM (ligand) from the Boltz-2 PDB, runs Gnina with `--autobox_ligand --num_modes 9 --exhaustiveness 8 --cnn_scoring rescore`. Per-candidate `docked.sdf` + parsed `gnina_results.csv` (CNN affinity, Vina, CNN pose). Sets `LD_LIBRARY_PATH` to bundle the env-local `libcudnn.so.9` (otherwise Gnina dies with "cannot open shared object"). |
+| 3 | `postprocess_phase3.py <run_dir>` | Phase 3 | Merges Phase-1 metrics + Track A + Gnina, min-max normalizes each, applies the workflow's composite weights (KD 0.20, perm 0.15, Boltz aff 0.15, Boltz prob 0.10, iPTM 0.10, CNN 0.15, Vina 0.15), writes `phase3_final_ranking.csv` + `phase3_summary.json`. |
+| 3.5 | `workflow-skills/scripts/helmgpt/helmgpt_viz.py <run_dir>` | Visualization | 12 individual figures + optional `--merged` 3×3 summary. Reads `phase3_final_ranking.csv` directly when present. See **Phase 3.5** above. |
+
+> **One-shot recipe** (after `setup_case3.py` and `run_target_msa.sh`):
+> ```bash
+> RUN=results/case3_kras_helmgpt/phase1_$(date +%Y%m%d_%H%M%S)
+> # Phase 1 (via MCP tool, ~40 min for 500 steps)
+> # ... call submit_optimize_peptides with prior_model=/app/models/helmgpt/gpt_model_final_0.105.pt, output_dir=$RUN
+> python  examples/case3_kras_perm_opt_helmgpt/postprocess_phase1.py            "$RUN"
+> tool-mcps/helm_gpt_mcp/env_py3.7/bin/python \
+>         examples/case3_kras_perm_opt_helmgpt/postprocess_phase2_prep.py        "$RUN" --top 20
+> bash    examples/case3_kras_perm_opt_helmgpt/run_phase2_track_a.sh             "$RUN"     # ~40 min
+> bash    examples/case3_kras_perm_opt_helmgpt/run_phase2_gnina.sh               "$RUN" 0   # ~10 min
+> # (optional) bash examples/case3_kras_perm_opt_helmgpt/run_phase2_track_b.sh   "$RUN" 1   # only if AF3 needed
+> python  examples/case3_kras_perm_opt_helmgpt/postprocess_phase3.py             "$RUN"
+> python  workflow-skills/scripts/helmgpt/helmgpt_viz.py                         "$RUN"
+> ```
+> End-to-end wallclock for 20 top candidates with cached MSA: ~1.5 hours on a single A100.
 
 ---
 

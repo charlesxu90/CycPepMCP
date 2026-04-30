@@ -41,28 +41,62 @@ GRAY = [0.5, 0.5, 0.5]
 # Figure size for individual plots
 FIGSIZE = (5, 5)
 
-# Quality thresholds for HELM-GPT KRAS binder pipeline
+# Workflow-faithful thresholds (binder_design_helmgpt.md "Quality Thresholds
+# Reference Table"). Each metric's tuple is (excellent_value, gate_value, label)
+# where gate_value is the workflow's PASS threshold used for filtering /
+# composite scoring and excellent_value is the tighter context line.
+WORKFLOW_THRESHOLDS = {
+    'kd':            (1.0,  10.0,  'Workflow gate KD<10 μM (PASS, lower is better)'),
+    'perm':          (-5.0, -6.0,  'Workflow gate perm>-6.0 log cm/s (PASS)'),
+    'boltz_aff':     (0.5,  0.0,   'Workflow gate Boltz-2 affinity>0.0'),
+    'boltz_prob':    (0.6,  0.5,   'Workflow gate Boltz-2 binding prob>0.5'),
+    'boltz_iptm':    (0.80, 0.70,  'Workflow gate Boltz-2 ligand iPTM>0.70'),
+    'af3_iptm':      (0.80, 0.60,  'Workflow gate AF3 iPTM>0.60'),
+    'af3_plddt':     (0.85, 0.70,  'Workflow gate AF3 pLDDT>0.70'),
+    'gnina_cnn':     (7.0,  6.0,   'Workflow gate Gnina CNN pKd>6.0'),
+    'gnina_vina':    (-8.0, -7.0,  'Workflow gate Gnina Vina<-7.0 kcal/mol'),
+}
+
+EXCELLENT_LABEL = {
+    'kd':         'Excellent KD<1 μM',
+    'perm':       'Excellent perm>-5.0',
+    'boltz_aff':  'Excellent Boltz-2 affinity>0.5',
+    'boltz_prob': 'Excellent Boltz-2 prob>0.6',
+    'boltz_iptm': 'Excellent Boltz-2 iPTM>0.80',
+    'af3_iptm':   'Excellent AF3 iPTM>0.80',
+    'af3_plddt':  'Excellent AF3 pLDDT>0.85',
+    'gnina_cnn':  'Excellent Gnina CNN pKd>7.0',
+    'gnina_vina': 'Excellent Gnina Vina<-8.0',
+}
+
+# Back-compat: scalar dict keyed like the older code expected.
 QUALITY_THRESHOLDS = {
-    'kd_excellent': 1,
-    'kd_good': 10,
+    'kd_excellent': WORKFLOW_THRESHOLDS['kd'][0],
+    'kd_good': WORKFLOW_THRESHOLDS['kd'][1],
     'kd_acceptable': 100,
-    'perm_excellent': -5.0,
-    'perm_good': -6.0,
+    'perm_excellent': WORKFLOW_THRESHOLDS['perm'][0],
+    'perm_good': WORKFLOW_THRESHOLDS['perm'][1],
     'perm_acceptable': -6.5,
-    'af3_iptm_excellent': 0.80,
-    'af3_iptm_good': 0.60,
+    'af3_iptm_excellent': WORKFLOW_THRESHOLDS['af3_iptm'][0],
+    'af3_iptm_good': WORKFLOW_THRESHOLDS['af3_iptm'][1],
     'af3_iptm_acceptable': 0.40,
-    'boltz_avg_aff_good': 0.0,
+    'boltz_avg_aff_good': WORKFLOW_THRESHOLDS['boltz_aff'][1],
     'boltz_avg_aff_acceptable': -0.3,
-    'boltz_avg_prob_good': 0.5,
+    'boltz_avg_prob_good': WORKFLOW_THRESHOLDS['boltz_prob'][1],
     'boltz_avg_prob_acceptable': 0.4,
-    'gnina_cnn_excellent': 7.0,
-    'gnina_cnn_good': 6.0,
+    'gnina_cnn_excellent': WORKFLOW_THRESHOLDS['gnina_cnn'][0],
+    'gnina_cnn_good': WORKFLOW_THRESHOLDS['gnina_cnn'][1],
     'gnina_cnn_acceptable': 5.0,
-    'gnina_vina_excellent': -8.0,
-    'gnina_vina_good': -7.0,
+    'gnina_vina_excellent': WORKFLOW_THRESHOLDS['gnina_vina'][0],
+    'gnina_vina_good': WORKFLOW_THRESHOLDS['gnina_vina'][1],
     'gnina_vina_acceptable': -5.0,
 }
+
+
+def _thr(metric):
+    """Return (excellent_value, gate_value, gate_label, excellent_label)."""
+    e, g, gl = WORKFLOW_THRESHOLDS[metric]
+    return e, g, gl, EXCELLENT_LABEL[metric]
 
 
 def prettify_ax(ax):
@@ -117,12 +151,45 @@ def get_color_for_value(value, threshold_good, threshold_acceptable, higher_is_b
 # Data Loading
 # ============================================================
 
+def _load_phase3_ranking(results_dir: Path) -> pd.DataFrame:
+    """Load case3 phase3_final_ranking.csv (single-table format) and rename
+    its columns into the schema this viz script expects."""
+    fp = results_dir / 'phase3_final_ranking.csv'
+    if not fp.exists():
+        return None
+    df = pd.read_csv(fp)
+    rename = {
+        'kd_um':                            'raw_kras_kd',
+        'aff_affinity_pred_value':          'boltz_avg_aff',
+        'aff_affinity_probability_binary':  'boltz_avg_prob',
+        'conf_iptm':                        'boltz_ligand_iptm',
+        'conf_complex_plddt':               'boltz_complex_plddt',
+        'cnn_affinity':                     'gnina_best_cnn',
+        'vina_affinity':                    'gnina_best_vina',
+    }
+    for src, dst in rename.items():
+        if src in df.columns and dst not in df.columns:
+            df[dst] = df[src]
+    # Use Boltz iPTM as AF3 iPTM substitute when AF3 wasn't run.
+    if 'af3_iptm' not in df.columns and 'boltz_ligand_iptm' in df.columns:
+        df['af3_iptm'] = df['boltz_ligand_iptm']
+    if 'design_id' not in df.columns:
+        rk = df['final_rank'] if 'final_rank' in df.columns else df.index + 1
+        df['design_id'] = [f'c{int(r):02d}' for r in rk]
+    print(f"Loaded phase3 ranking from {fp} ({len(df)} designs)")
+    return df
+
+
 def load_helmgpt_results(results_dir: Path) -> pd.DataFrame:
     """Load and merge all HELM-GPT pipeline results into a single DataFrame."""
     results_dir = Path(results_dir)
 
-    # 1. Load candidate CSV
-    df = None
+    # 0. Prefer the case3-style consolidated phase3 ranking CSV.
+    df = _load_phase3_ranking(results_dir)
+    if df is not None:
+        return df
+
+    # 1. Load candidate CSV (legacy / multi-file layout)
     for pattern in ['top*_phase2.csv', 'top*_routed.csv', 'top*_candidates.csv']:
         matches = sorted(results_dir.glob(pattern))
         if matches:
@@ -265,7 +332,17 @@ def generate_mock_data(n_designs=10) -> pd.DataFrame:
 
 
 def calculate_composite_score(df: pd.DataFrame) -> pd.Series:
-    """Calculate composite quality score for ranking designs."""
+    """Composite quality score (0-1) for ranking designs.
+
+    Prefers the canonical `composite` column written by `postprocess_phase3.py`
+    (workflow-spec weights: KD 0.20, perm 0.15, Boltz aff 0.15, Boltz prob 0.10,
+    iPTM 0.10, Gnina CNN 0.15, Gnina Vina 0.15). Falls back to a viz-internal
+    recompute when that column isn't present (legacy / partial runs).
+    """
+    if 'composite' in df.columns and df['composite'].notna().any():
+        return df['composite'].astype(float)
+
+    # Fallback: weights match the workflow doc Phase-3 Composite Scoring table.
     scores = pd.Series(0.0, index=df.index)
 
     def _norm(s, lo, hi, higher_better=True):
@@ -273,29 +350,20 @@ def calculate_composite_score(df: pd.DataFrame) -> pd.Series:
         n = np.clip(n, 0, 1)
         return n if higher_better else 1 - n
 
-    if 'raw_kras_kd' in df.columns:
-        scores += 0.20 * _norm(df['raw_kras_kd'],
-                               df['raw_kras_kd'].min(), df['raw_kras_kd'].max(),
-                               higher_better=False)
-    if 'raw_permeability' in df.columns:
-        scores += 0.15 * _norm(df['raw_permeability'],
-                               df['raw_permeability'].min(), df['raw_permeability'].max(),
-                               higher_better=True)
-    if 'af3_iptm' in df.columns:
-        vals = df['af3_iptm'].fillna(0)
-        scores += 0.15 * _norm(vals, vals.min(), vals.max(), higher_better=True)
-    if 'gnina_best_cnn' in df.columns:
-        vals = df['gnina_best_cnn'].fillna(0)
-        scores += 0.15 * _norm(vals, vals.min(), vals.max(), higher_better=True)
-    if 'gnina_best_vina' in df.columns:
-        vals = df['gnina_best_vina'].fillna(0)
-        scores += 0.15 * _norm(vals, vals.min(), vals.max(), higher_better=False)
-    if 'boltz_avg_aff' in df.columns:
-        vals = df['boltz_avg_aff'].fillna(0)
-        scores += 0.10 * _norm(vals, vals.min(), vals.max(), higher_better=True)
-    if 'boltz_avg_prob' in df.columns:
-        vals = df['boltz_avg_prob'].fillna(0)
-        scores += 0.10 * _norm(vals, vals.min(), vals.max(), higher_better=True)
+    spec = [
+        ('raw_kras_kd',     0.20, False),
+        ('raw_permeability',0.15, True),
+        ('boltz_avg_aff',   0.15, True),
+        ('boltz_avg_prob',  0.10, True),
+        ('af3_iptm',        0.10, True),
+        ('gnina_best_cnn',  0.15, True),
+        ('gnina_best_vina', 0.15, False),
+    ]
+    for col, w, higher in spec:
+        if col not in df.columns:
+            continue
+        vals = df[col].fillna(df[col].min() if higher else df[col].max())
+        scores += w * _norm(vals, vals.min(), vals.max(), higher_better=higher)
 
     return scores
 
@@ -305,18 +373,13 @@ def calculate_composite_score(df: pd.DataFrame) -> pd.Series:
 # ============================================================
 
 def plot_violin_strip(values, title, ylabel, thresholds, higher_is_better=True,
-                      palette_idx=0, output_path=None, figsize=FIGSIZE):
-    """Create a violin + strip + box distribution plot.
+                      palette_idx=0, output_path=None, figsize=FIGSIZE,
+                      threshold_labels=('Excellent (tighter)', 'Workflow gate')):
+    """Violin + strip + box distribution plot with rfpeptides-style threshold rendering.
 
-    Args:
-        values: array of metric values (NaN-dropped before calling)
-        title: figure title
-        ylabel: y-axis label
-        thresholds: (good, acceptable) threshold pair
-        higher_is_better: threshold direction
-        palette_idx: colorblind palette index for violin fill
-        output_path: if set, save to this path (without extension)
-        figsize: figure size tuple
+    `thresholds = (excellent, gate)`. The `gate` line is the workflow's PASS
+    cutoff (solid, prominent); `excellent` is a tighter context line (dashed,
+    faint). `threshold_labels` populates the legend; the value is appended.
     """
     fig, ax = simple_ax(figsize=figsize)
 
@@ -343,9 +406,12 @@ def plot_violin_strip(values, title, ylabel, thresholds, higher_is_better=True,
     ax.scatter(jitter, values, c=colors, s=40, alpha=0.7, edgecolors='white',
                linewidth=0.5, zorder=3)
 
-    # Threshold lines
-    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.7, linewidth=1)
-    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='--', alpha=0.7, linewidth=1)
+    # Workflow gate (solid prominent) + excellent context (dashed faint)
+    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='-', alpha=0.85,
+               linewidth=1.4, label=f"{threshold_labels[1]} ({thresholds[1]:g})")
+    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.55,
+               linewidth=1.0, label=f"{threshold_labels[0]} ({thresholds[0]:g})")
+    ax.legend(loc='lower left', fontsize=7, frameon=True, framealpha=0.9)
 
     # Summary stats
     median = np.median(values)
@@ -368,8 +434,9 @@ def plot_violin_strip(values, title, ylabel, thresholds, higher_is_better=True,
 
 
 def _plot_violin_strip_ax(ax, values, title, ylabel, thresholds, higher_is_better=True,
-                           palette_idx=0):
-    """Internal: Plot violin + strip distribution on a given axis (for merged figure)."""
+                           palette_idx=0,
+                           threshold_labels=('Excellent', 'Workflow gate')):
+    """Internal: violin + strip on a given axis (for merged figure), with rfpeptides line style."""
     parts = ax.violinplot(values, positions=[0], showmeans=False,
                           showmedians=False, showextrema=False)
     for pc in parts['bodies']:
@@ -390,8 +457,11 @@ def _plot_violin_strip_ax(ax, values, title, ylabel, thresholds, higher_is_bette
     ax.scatter(jitter, values, c=colors, s=30, alpha=0.7, edgecolors='white',
                linewidth=0.4, zorder=3)
 
-    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.7, linewidth=1)
-    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='--', alpha=0.7, linewidth=1)
+    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='-', alpha=0.85,
+               linewidth=1.2, label=f"{threshold_labels[1]} ({thresholds[1]:g})")
+    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.55,
+               linewidth=0.9, label=f"{threshold_labels[0]} ({thresholds[0]:g})")
+    ax.legend(loc='lower left', fontsize=6, frameon=True, framealpha=0.9)
 
     median = np.median(values)
     mean = np.mean(values)
@@ -413,21 +483,25 @@ def _plot_violin_strip_ax(ax, values, title, ylabel, thresholds, higher_is_bette
 def plot_kd_distribution(df, output_path=None):
     """Plot 1: KRAS KD distribution."""
     values = df['raw_kras_kd'].dropna().values
+    e, g, gl, el = _thr('kd')
     return plot_violin_strip(
         values, 'KRAS Binding Affinity (KD)',
         'KD (\u03bcM, lower is better)',
-        (QUALITY_THRESHOLDS['kd_excellent'], QUALITY_THRESHOLDS['kd_good']),
-        higher_is_better=False, palette_idx=0, output_path=output_path)
+        (e, g),
+        higher_is_better=False, palette_idx=0, output_path=output_path,
+        threshold_labels=(el, gl))
 
 
 def plot_permeability_distribution(df, output_path=None):
     """Plot 2: Permeability distribution."""
     values = df['raw_permeability'].dropna().values
+    e, g, gl, el = _thr('perm')
     return plot_violin_strip(
         values, 'Membrane Permeability',
         'log Perm (cm/s, higher is better)',
-        (QUALITY_THRESHOLDS['perm_good'], QUALITY_THRESHOLDS['perm_acceptable']),
-        higher_is_better=True, palette_idx=1, output_path=output_path)
+        (e, g),
+        higher_is_better=True, palette_idx=1, output_path=output_path,
+        threshold_labels=(el, gl))
 
 
 def plot_quality_scatter(df, output_path=None):
@@ -438,17 +512,19 @@ def plot_quality_scatter(df, output_path=None):
     scatter = ax.scatter(df['raw_kras_kd'], df['raw_permeability'], c=scores,
                         cmap='viridis', s=80, alpha=0.8, edgecolors='white', linewidth=0.5)
 
-    # Good zone
-    rect_good = Rectangle((0, QUALITY_THRESHOLDS['perm_good']),
-                          QUALITY_THRESHOLDS['kd_good'],
-                          0 - QUALITY_THRESHOLDS['perm_good'],
-                          linewidth=0, facecolor=CAT_PALETTE[2], alpha=0.1)
+    kd_gate = WORKFLOW_THRESHOLDS['kd'][1]
+    perm_gate = WORKFLOW_THRESHOLDS['perm'][1]
+
+    # Shaded PASS region (KD<gate AND perm>gate)
+    rect_good = Rectangle((0, perm_gate), kd_gate, 0 - perm_gate,
+                          linewidth=0, facecolor=CAT_PALETTE[2], alpha=0.12)
     ax.add_patch(rect_good)
 
-    ax.axvline(x=QUALITY_THRESHOLDS['kd_good'], color=CAT_PALETTE[2],
-               linestyle='--', alpha=0.5, linewidth=1)
-    ax.axhline(y=QUALITY_THRESHOLDS['perm_good'], color=CAT_PALETTE[2],
-               linestyle='--', alpha=0.5, linewidth=1)
+    ax.axvline(x=kd_gate, color=CAT_PALETTE[2], linestyle='-', alpha=0.85,
+               linewidth=1.4, label=f"Workflow gate KD<{kd_gate:g} \u03bcM")
+    ax.axhline(y=perm_gate, color=CAT_PALETTE[1], linestyle='-', alpha=0.85,
+               linewidth=1.4, label=f"Workflow gate perm>{perm_gate:g}")
+    ax.legend(loc='upper right', fontsize=7, frameon=True, framealpha=0.9)
 
     ax.set_title('KD vs Permeability', fontsize=14, fontweight='bold', pad=12)
     ax.set_xlabel('KRAS KD (\u03bcM, lower is better)', fontsize=11)
@@ -465,17 +541,21 @@ def plot_quality_scatter(df, output_path=None):
 
 
 def plot_af3_iptm_distribution(df, output_path=None):
-    """Plot 4: AF3 iPTM distribution."""
-    if 'af3_iptm' not in df.columns:
+    """Plot 4: AF3 iPTM distribution (or Boltz-2 iPTM proxy when AF3 unavailable)."""
+    col = 'af3_iptm' if 'af3_iptm' in df.columns else (
+        'boltz_ligand_iptm' if 'boltz_ligand_iptm' in df.columns else None)
+    if col is None:
         return None
-    values = df['af3_iptm'].dropna().values
+    values = df[col].dropna().values
     if len(values) == 0:
         return None
+    e, g, gl, el = _thr('af3_iptm' if col == 'af3_iptm' else 'boltz_iptm')
+    title = 'AlphaFold3 Interface iPTM' if col == 'af3_iptm' else 'Boltz-2 Interface iPTM (AF3 substitute)'
     fig = plot_violin_strip(
-        values, 'AlphaFold3 Interface iPTM',
-        'iPTM (higher is better)',
-        (QUALITY_THRESHOLDS['af3_iptm_good'], QUALITY_THRESHOLDS['af3_iptm_acceptable']),
-        higher_is_better=True, palette_idx=2, output_path=output_path)
+        values, title, 'iPTM (higher is better)',
+        (e, g),
+        higher_is_better=True, palette_idx=2, output_path=output_path,
+        threshold_labels=(el, gl))
     fig.axes[0].set_ylim(min(values) - 0.05, 1.05)
     if output_path:
         save_for_pub(fig, output_path)
@@ -489,11 +569,12 @@ def plot_gnina_cnn_distribution(df, output_path=None):
     values = df['gnina_best_cnn'].dropna().values
     if len(values) == 0:
         return None
+    e, g, gl, el = _thr('gnina_cnn')
     return plot_violin_strip(
-        values, 'Gnina CNN Affinity',
-        'pKd (higher is better)',
-        (QUALITY_THRESHOLDS['gnina_cnn_good'], QUALITY_THRESHOLDS['gnina_cnn_acceptable']),
-        higher_is_better=True, palette_idx=3, output_path=output_path)
+        values, 'Gnina CNN Affinity', 'pKd (higher is better)',
+        (e, g),
+        higher_is_better=True, palette_idx=3, output_path=output_path,
+        threshold_labels=(el, gl))
 
 
 def plot_gnina_vina_distribution(df, output_path=None):
@@ -503,11 +584,12 @@ def plot_gnina_vina_distribution(df, output_path=None):
     values = df['gnina_best_vina'].dropna().values
     if len(values) == 0:
         return None
+    e, g, gl, el = _thr('gnina_vina')
     return plot_violin_strip(
-        values, 'Gnina Vina Score',
-        'kcal/mol (more negative is better)',
-        (QUALITY_THRESHOLDS['gnina_vina_good'], QUALITY_THRESHOLDS['gnina_vina_acceptable']),
-        higher_is_better=False, palette_idx=4, output_path=output_path)
+        values, 'Gnina Vina Score', 'kcal/mol (more negative is better)',
+        (e, g),
+        higher_is_better=False, palette_idx=4, output_path=output_path,
+        threshold_labels=(el, gl))
 
 
 def plot_boltz_affinity_distribution(df, output_path=None):
@@ -517,11 +599,12 @@ def plot_boltz_affinity_distribution(df, output_path=None):
     values = df['boltz_avg_aff'].dropna().values
     if len(values) == 0:
         return None
+    e, g, gl, el = _thr('boltz_aff')
     return plot_violin_strip(
-        values, 'Boltz-2 Ensemble Affinity',
-        'Avg Affinity (higher is better)',
-        (QUALITY_THRESHOLDS['boltz_avg_aff_good'], QUALITY_THRESHOLDS['boltz_avg_aff_acceptable']),
-        higher_is_better=True, palette_idx=0, output_path=output_path)
+        values, 'Boltz-2 Ensemble Affinity', 'Avg Affinity (higher is better)',
+        (e, g),
+        higher_is_better=True, palette_idx=0, output_path=output_path,
+        threshold_labels=(el, gl))
 
 
 def plot_boltz_probability_distribution(df, output_path=None):
@@ -531,11 +614,12 @@ def plot_boltz_probability_distribution(df, output_path=None):
     values = df['boltz_avg_prob'].dropna().values
     if len(values) == 0:
         return None
+    e, g, gl, el = _thr('boltz_prob')
     fig = plot_violin_strip(
-        values, 'Boltz-2 Binding Probability',
-        'Avg Probability (higher is better)',
-        (QUALITY_THRESHOLDS['boltz_avg_prob_good'], QUALITY_THRESHOLDS['boltz_avg_prob_acceptable']),
-        higher_is_better=True, palette_idx=1, output_path=output_path)
+        values, 'Boltz-2 Binding Probability', 'Avg Probability (higher is better)',
+        (e, g),
+        higher_is_better=True, palette_idx=1, output_path=output_path,
+        threshold_labels=(el, gl))
     fig.axes[0].set_ylim(min(0, min(values) - 0.05), 1.05)
     if output_path:
         save_for_pub(fig, output_path)
@@ -565,82 +649,94 @@ def plot_composite_distribution(df, output_path=None):
 
 
 def plot_radar_chart(df, output_path=None, top_n=5):
-    """Plot radar/spider chart of top candidates across 5 normalized metrics."""
-    # Define metrics: (column, label, normalize_fn)
-    metric_defs = [
-        ('raw_kras_kd', 'KD',
-         lambda v: np.clip(1 - (v / 10), 0, 1)),
-        ('raw_permeability', 'Permeability',
-         lambda v: np.clip((v - (-8)) / ((-5) - (-8)), 0, 1)),
-        ('af3_iptm', 'AF3 iPTM',
-         lambda v: np.clip(v, 0, 1)),
-        ('gnina_best_cnn', 'Gnina CNN',
-         lambda v: np.clip(v / 10, 0, 1)),
-        ('gnina_best_vina', 'Gnina Vina',
-         lambda v: np.clip((-v) / 10, 0, 1)),
-    ]
+    """Spider/radar chart: top-N candidates across all available composite metrics.
 
-    # Filter to metrics present in the dataframe
-    available = [(col, label, fn) for col, label, fn in metric_defs if col in df.columns]
+    Each axis is min-max normalized within the full candidate set so every
+    metric uses the full 0-1 radial range (otherwise tightly clustered metrics
+    like KD~7-9 μM collapse to a single sliver). Lower-is-better metrics (KD,
+    Vina) are inverted so "outer = better" everywhere. A faint median-of-set
+    reference polygon is drawn for context.
+    """
+    # (column, label, higher_is_better) — Boltz aff/prob excluded by request;
+    # they're noisy ensemble scores that overlap with Gnina + iPTM info.
+    metric_defs = [
+        ('raw_kras_kd',      'KD',          False),
+        ('raw_permeability', 'Perm',        True),
+        ('af3_iptm',         'iPTM',        True),  # AF3 iPTM, or Boltz iPTM proxy
+        ('gnina_best_cnn',   'Gnina CNN',   True),
+        ('gnina_best_vina',  'Gnina Vina',  False),
+    ]
+    available = [(c, l, h) for c, l, h in metric_defs if c in df.columns]
     if len(available) < 3:
         print("Radar chart: fewer than 3 metrics available, skipping")
         return None
 
-    # Select top candidates by composite score with all available metrics present
+    # Min-max normalize across the FULL dataframe so each axis has range.
+    df_n = pd.DataFrame(index=df.index)
+    for col, label, higher in available:
+        s = df[col].astype(float)
+        lo, hi = s.min(), s.max()
+        if pd.isna(lo) or pd.isna(hi) or hi == lo:
+            df_n[label] = 0.5
+        else:
+            n = (s - lo) / (hi - lo)
+            df_n[label] = n if higher else 1.0 - n
+
+    # Composite -> top-N (only candidates with all metrics non-NaN qualify)
     df_work = df.copy()
     df_work['_score'] = calculate_composite_score(df_work)
     mask = pd.Series(True, index=df_work.index)
     for col, _, _ in available:
         mask &= df_work[col].notna()
-    df_valid = df_work[mask].sort_values('_score', ascending=False).head(top_n)
-
-    if len(df_valid) == 0:
+    top_idx = df_work[mask].sort_values('_score', ascending=False).head(top_n).index
+    if len(top_idx) == 0:
         print("Radar chart: no candidates with all metrics, skipping")
         return None
 
-    # Compute normalized values
-    labels = [label for _, label, _ in available]
+    labels = [l for _, l, _ in available]
     n_metrics = len(labels)
     angles = np.linspace(0, 2 * np.pi, n_metrics, endpoint=False).tolist()
-    angles += angles[:1]  # close the polygon
+    angles += angles[:1]
 
-    fig = plt.figure(figsize=(6, 6))
+    fig = plt.figure(figsize=(7.5, 6.5))
     ax = fig.add_subplot(111, polar=True)
 
-    # Draw polygon (spider-net) gridlines instead of circles
+    # Spider-web grid (polygons + spokes)
     grid_levels = [0.2, 0.4, 0.6, 0.8, 1.0]
     for level in grid_levels:
-        grid_vals = [level] * n_metrics + [level]
-        ax.plot(angles, grid_vals, color='gray', linewidth=1.0, alpha=0.4)
-    # Draw spoke lines from center to each vertex
-    for angle in angles[:-1]:
-        ax.plot([angle, angle], [0, 1], color='gray', linewidth=1.0, alpha=0.4)
-    # Hide default circular gridlines
-    ax.yaxis.grid(False)
-    ax.xaxis.grid(False)
+        ax.plot(angles, [level] * n_metrics + [level],
+                color='gray', linewidth=0.8, alpha=0.35)
+    for a in angles[:-1]:
+        ax.plot([a, a], [0, 1], color='gray', linewidth=0.8, alpha=0.35)
+    ax.yaxis.grid(False); ax.xaxis.grid(False)
 
-    # Colorblind-friendly palette
-    radar_colors = sns.color_palette('colorblind', n_colors=len(df_valid))
+    # Median-of-set reference polygon (dashed gray)
+    median_vals = df_n.median().reindex(labels).tolist()
+    ax.plot(angles, median_vals + median_vals[:1], '--',
+            color='gray', linewidth=1.0, alpha=0.55, label='Set median')
+    ax.fill(angles, median_vals + median_vals[:1], color='gray', alpha=0.05)
 
-    for i, (_, row) in enumerate(df_valid.iterrows()):
-        values = [fn(row[col]) for col, _, fn in available]
-        values += values[:1]  # close polygon
-        design_id = row.get('design_id', f'#{i}')
-
-        ax.plot(angles, values, 'o-', linewidth=1.5, color=radar_colors[i],
-                label=design_id, markersize=4)
-        ax.fill(angles, values, alpha=0.1, color=radar_colors[i])
+    # Top-N polygons in colorblind palette
+    radar_colors = sns.color_palette('colorblind', n_colors=len(top_idx))
+    for i, idx in enumerate(top_idx):
+        values = df_n.loc[idx, labels].tolist()
+        values += values[:1]
+        design_id = df_work.loc[idx].get('design_id', f'#{i}')
+        ax.plot(angles, values, 'o-', linewidth=1.6, color=radar_colors[i],
+                label=str(design_id), markersize=4.5)
+        ax.fill(angles, values, alpha=0.10, color=radar_colors[i])
 
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(labels, fontsize=10)
     ax.set_ylim(0, 1)
     ax.set_yticks(grid_levels)
     ax.set_yticklabels(['0.2', '0.4', '0.6', '0.8', '1.0'], fontsize=7, color='gray')
-    ax.set_title('Top Candidates — Multi-Metric Profile',
-                 fontsize=13, fontweight='bold', pad=20)
+    ax.set_title(f'Top {len(top_idx)} Candidates — Multi-Metric Profile\n'
+                 '(per-axis min-max within set; outer = better)',
+                 fontsize=12, fontweight='bold', pad=18)
     ax.spines['polar'].set_visible(False)
-    ax.legend(loc='upper right', bbox_to_anchor=(1.25, 1.1), fontsize=9,
-              framealpha=0.9)
+    ax.legend(loc='center left', bbox_to_anchor=(1.18, 0.5), fontsize=8,
+              frameon=True, framealpha=0.9)
 
     plt.tight_layout()
     if output_path:

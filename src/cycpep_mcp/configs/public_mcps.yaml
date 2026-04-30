@@ -125,3 +125,16 @@ mcps:
     - npm run build
     source: Augmented Nature
     url: https://github.com/Augmented-Nature/Augmented-Nature-UniProt-MCP-Server
+  
+  biomedical:
+    dependencies: []
+    description: Clinical trials, literature, genomic variants
+    env_vars: {}
+    runtime: python
+    server_args:
+    - run
+    server_command: biomcp
+    setup_commands:
+    - pip install -e .
+    source: Community
+    url: https://github.com/genomoncology/biomcp
