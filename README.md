@@ -1,6 +1,8 @@
-# CycPepMCP
-
+# CycPepMCP: Democratizing Cyclic Peptide Design with Agentic AI
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 Cyclic peptide engineering toolkit for [Claude Code](https://claude.ai/code) via the Model Context Protocol (MCP). 26 MCP servers covering backbone generation, sequence design, structure prediction, MD simulation, and property optimization.
+
+![CycPepMCP overview](./figs/cycpepmcp-overview.png)
 
 ## Prerequisites
 
@@ -212,5 +214,5 @@ CycPepMCP/
 See [details.md](details.md) for extended documentation.
 
 ## License
+This code is licensed under [![License](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE).
 
-MIT License - see LICENSE file for details.
