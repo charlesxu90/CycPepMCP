@@ -4,6 +4,8 @@ Cyclic peptide engineering toolkit for [Claude Code](https://claude.ai/code) via
 
 ![CycPepMCP overview](./figs/cycpepmcp-overview.png)
 
+This is part of the [MacromNex](https://github.com/MacromNex) ecosystem.
+
 ## Prerequisites
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI installed
