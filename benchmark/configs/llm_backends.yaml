@@ -1,0 +1,78 @@
+# CycPepMCP Benchmark LLM Backends Configuration
+#
+# Defines the three LLM backends used for the agent comparison (3 LLMs x 9 tasks).
+# Edits here propagate to `benchmark/scripts/llm_orchestrator.py`.
+#
+# Locked W1 of the benchmark plan. Bump `version` and re-run from clean state if
+# changing model IDs or grid composition.
+
+version: "1.0"
+locked_at: "2026-05-05"
+
+backends:
+  claude:
+    role: strong
+    primary: true
+    provider: anthropic
+    model_id: claude-opus-4-7
+    sdk_package: anthropic
+    sdk_version_min: "0.40.0"
+    api_key_env: ANTHROPIC_API_KEY
+    notes: Reference / upper-bound model. Runs full 13-task panel + 3 reruns.
+
+  gpt:
+    role: mid_cost
+    primary: false
+    provider: openai
+    model_id: gpt-4-turbo
+    sdk_package: openai
+    sdk_version_min: "1.50.0"
+    api_key_env: OPENAI_API_KEY
+    notes: Mid-cost model. Runs the 9-task LLM grid only.
+
+  gemini:
+    role: fast
+    primary: false
+    provider: google
+    model_id: gemini-1.5-pro
+    sdk_package: google-generativeai
+    sdk_version_min: "0.7.0"
+    api_key_env: GOOGLE_API_KEY
+    notes: Fast/low-cost model. Runs the 9-task LLM grid only.
+
+# ---------------------------------------------------------------------------
+# 9-task grid run on all 3 LLM backends. Composition matches the LLM-comparison
+# subset declared in docs/benchmark_plan.md section 7. Tasks not in this grid
+# are run on Claude only.
+llm_grid:
+  afcycdesign: [AF_MDM2, AF_MCL1, AF_PCSK9]
+  rfpeptides:  [RF_MCL1, RF_MDM2, RF_RBTA]
+  helmgpt:     [HG_KRASG12D, HG_PD1PDL1, HG_MDM2P53]
+
+# Token-counting policy: use SDK-reported usage when available; fall back to
+# tiktoken (gpt) / Anthropic counter (claude) / google.generativeai count (gemini).
+token_counting:
+  prefer_sdk_usage_field: true
+  fallback_tokenizers:
+    claude: anthropic.AsyncAnthropic.count_tokens
+    gpt: tiktoken.encoding_for_model
+    gemini: genai.GenerativeModel.count_tokens
+
+# Generation parameters held constant across LLMs to keep the comparison fair.
+common_generation_params:
+  temperature: 0.2
+  max_output_tokens: 8192
+  system_prompt_source: workflow-skills/binder_design_{workflow}.md
+
+# Per-LLM overrides only allowed for SDK-specific params that don't affect quality
+# (e.g. retry config, timeout). NOT for temperature, max_tokens, or system_prompt.
+sdk_specific_overrides:
+  claude:
+    timeout_seconds: 600
+    max_retries: 3
+  gpt:
+    timeout_seconds: 600
+    max_retries: 3
+  gemini:
+    timeout_seconds: 600
+    max_retries: 3

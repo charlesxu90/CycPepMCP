@@ -1,0 +1,185 @@
+# CycPepMCP Benchmark Workflows Configuration
+#
+# Single source of truth for workflow PASS gates, composite-score weights, and
+# run parameters. Loaded by `benchmark/configs/thresholds.py`. Edits here
+# propagate to all consumers (workflow runners, postprocess scripts, viz).
+#
+# Locked W1 of the benchmark plan (docs/benchmark_plan.md). Do not edit during
+# a benchmark run; bump `version` and re-run from clean state if changing.
+
+version: "1.0"
+locked_at: "2026-05-05"
+
+# ---------------------------------------------------------------------------
+afcycdesign:
+  description: AF2-guided cyclic peptide binder optimization (pocket/groove targets)
+  chain_convention:
+    target: A
+    binder: B
+  pass_gates:
+    primary:
+      mean_plddt_min: 0.70   # 0-1 scale; ~70 on 0-100
+      iptm_min: 0.50
+      ipae_max: 0.20         # default; per-target override in targets.csv
+      ptm_min: 0.60
+      no_fatal_error: true
+    excellent:
+      mean_plddt_min: 0.85
+      iptm_min: 0.70
+      ipae_max: 0.15
+      ptm_min: 0.80
+  composite_weights:
+    plddt: 0.30
+    ipae_inv: 0.30
+    iptm: 0.25
+    ptm: 0.15
+  run_params:
+    optimizer: pssm_semigreedy   # alternatives: 3stage
+    num_models: 2
+    binder_length_default: 12
+    binder_length_range: [8, 16]
+  expected_outputs:
+    candidate_csv: afcycdesign_results.csv
+    candidate_csv_columns: [design, sequence, loss, i_con, plddt, ptm, i_ptm]
+  scripts:
+    runner: benchmark/scripts/workflow_runners/afcycdesign_runner.py   # NEW (W2)
+    viz: workflow-skills/scripts/afcycdesign/afcycdesign_viz.py
+    skill_md: workflow-skills/binder_design_afcycdesign.md
+  required_mcps: [afcycdesign_mcp]
+
+# ---------------------------------------------------------------------------
+rfpeptides:
+  description: De novo cyclic peptide binder design (RFdiffusion + ProteinMPNN + Rosetta)
+  chain_convention:
+    target: B           # opposite of AfCycDesign
+    binder: A
+  pass_gates:
+    primary:
+      plddt_min: 0.70
+      ipae_max_default: 0.30   # per-target override in targets.csv
+      ddg_max_default: -30     # REU; per-target override (e.g. MDM2 -50)
+      sap_max: 35
+      cms_min: 300
+    excellent:
+      plddt_min: 0.85
+      ipae_max: 0.15
+      ddg_max: -50
+      sap_max: 25
+      cms_min: 400
+  # Per-target iPAE gates from RFpeptides paper (Nat Chem Biol 2025); kept
+  # here so the runner and viz consume a single source. Targets in targets.csv
+  # may override via the ipae_pass_gate column.
+  per_target_thresholds:
+    mcl1:    { ipae: 0.30, ddg: -30 }   # concave pocket
+    mdm2:    { ipae: 0.30, ddg: -50 }   # concave pocket; MDM2-specific tighter ddG
+    gabarap: { ipae: 0.13, ddg: -30 }   # shallow groove; tightest gate
+    rbta:    { ipae: 0.40, ddg: -30 }   # flat beta-helix surface
+    pdl1:    { ipae: 0.40, ddg: -30 }   # flat IGV-like; treat as flat-class
+    general: { ipae: 0.30, ddg: -30 }   # fallback
+  composite_weights:
+    ddg_norm: 0.30
+    ipae_norm: 0.25
+    plddt_norm: 0.20
+    cms_norm: 0.15
+    sap_norm: 0.10
+  run_params:
+    proteinmpnn:
+      model: v_48_020
+      temperature: 0.0001
+      omit_aas: C
+      chains: A
+    rosetta:
+      relax_rounds: 4
+      use_peptide_cyclize_mover: true
+    afcycdesign_validation:
+      num_models: 1
+    diffusion:
+      steps: 50
+      binder_length_default: 14
+      num_designs_default: 5000
+  expected_outputs:
+    candidate_csv: final_summary.csv
+    candidate_csv_columns: [design, sequence, ddg, ipae, plddt, sap, cms, composite_score]
+  scripts:
+    runner: benchmark/scripts/workflow_runners/rfpeptides_runner.py    # thin wrapper
+    pipeline: workflow-skills/scripts/rfpeptides/run_pipeline.py        # existing
+    viz: workflow-skills/scripts/rfpeptides/rfpeptides_viz.py
+    skill_md: workflow-skills/binder_design_rfpeptides.md
+  required_mcps: [rfpeptides_mcp, proteinmpnn_mcp, rosetta_kic_mcp, afcycdesign_mcp]
+
+# ---------------------------------------------------------------------------
+helmgpt:
+  description: ncAA macrocyclic peptide RL design with target-specific reward model
+  pass_gates:
+    primary:
+      kd_um_max: 10.0
+      perm_logpapp_min: -6.0
+      af3_iptm_min: 0.60       # AF3 ligand iPTM PASS gate
+      boltz_iptm_min: 0.70     # Boltz-2 ligand iPTM PASS gate
+      gnina_cnn_min: 6.0
+      gnina_vina_max: -7.0
+      af3_plddt_min: 0.70
+      boltz_aff_min: 0.0
+      boltz_prob_min: 0.5
+      no_catastrophic_docking: true
+    excellent:
+      kd_um_max: 1.0
+      perm_logpapp_min: -5.0
+      iptm_min: 0.70
+      gnina_cnn_min: 7.0
+      gnina_vina_max: -8.0
+      af3_plddt_min: 0.85
+      af3_iptm_min: 0.80
+      boltz_aff_min: 0.5
+      boltz_prob_min: 0.6
+      boltz_iptm_min: 0.80
+    reward_model:
+      spearman_min_pass: 0.4   # Pre-RL gate; below this, target moves to backup
+      spearman_excellent: 0.6
+      scaffold_split_required: true
+  # Phase 1 PASS gate (matches existing postprocess_phase1.py)
+  phase1_gate:
+    perm_pass_threshold: -6.0       # raw log cm/s; higher better
+    kd_pass_log_threshold: 1.0      # log10(KD μM); KD<10 μM -> log<1.0
+    perm_fail_sentinel: -10.0
+    kd_fail_sentinel: 5.0
+  composite_weights:
+    # Match postprocess_phase3.py:32-40 exactly (track A; <=128 atoms)
+    kd:    0.20
+    perm:  0.15
+    aff:   0.15
+    prob:  0.10
+    iptm:  0.10
+    cnn:   0.15
+    vina:  0.15
+  structural_routing:
+    heavy_atom_threshold: 128
+    track_a_below_threshold: [boltz, alphafold3, gnina]
+    track_b_above_threshold: [alphafold3, gnina]
+  run_params:
+    rl:
+      loss_type: reinvent_cpl
+      n_steps_default: 500
+      batch_size_default: 32
+      seeds_per_target: 3       # repeats for novelty/diversity statistics
+    monomer_library: examples/co_opt_kras_kd_perm/monomer_library.csv
+    reward_model_type_default: xgboost   # Morgan FP + descriptors
+  expected_outputs:
+    candidate_csv: phase3_final_ranking.csv
+  scripts:
+    runner: benchmark/scripts/workflow_runners/helmgpt_runner.py        # NEW (W2)
+    postprocess_phase1: examples/co_opt_kras_kd_perm/postprocess_phase1.py
+    postprocess_phase3: examples/co_opt_kras_kd_perm/postprocess_phase3.py
+    viz: workflow-skills/scripts/helmgpt/helmgpt_viz.py
+    skill_md: workflow-skills/binder_design_helmgpt.md
+  required_mcps: [helm_gpt_mcp, boltz_mcp, alphafold3_mcp, gnina_mcp]
+
+# ---------------------------------------------------------------------------
+# Repeatability reruns (n=2): one task per workflow on Claude with new random seeds
+repeatability_reruns:
+  - task_id: AF_MDM2
+    seeds: [2, 3]
+  - task_id: RF_MCL1
+    seeds: [2, 3]
+  - task_id: HG_KRASG12D
+    seeds: [2, 3]
