@@ -17,6 +17,7 @@ A merged 2x3 summary figure can also be generated.
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -28,6 +29,15 @@ from matplotlib.table import Table
 import numpy as np
 import pandas as pd
 import seaborn as sns
+
+# Centralized PASS-gate thresholds (single source of truth: benchmark/configs/workflows.yaml).
+_HERE = Path(__file__).resolve()
+for _p in [_HERE.parent, *_HERE.parents]:
+    if (_p / "benchmark" / "configs" / "thresholds.py").is_file():
+        if str(_p) not in sys.path:
+            sys.path.insert(0, str(_p))
+        break
+from benchmark.configs import thresholds as cfg  # noqa: E402
 
 # Color palettes
 CAT_PALETTE = sns.color_palette('colorblind')
@@ -47,16 +57,20 @@ def adaptive_figsize(n_designs, base=(4, 4)):
     h = max(base[1], 5)
     return (w, h)
 
-# Quality thresholds for AfCycDesign pipeline
+# Quality thresholds for AfCycDesign pipeline.
+# `_good` => excellent gate (tighter line); `_acceptable` => primary PASS gate.
+# All values are pulled from workflows.yaml so the viz reflects the locked spec.
+_AF_PRIMARY = cfg.AFCYCDESIGN_PASS_GATE.primary
+_AF_EXCELLENT = cfg.AFCYCDESIGN_PASS_GATE.excellent
 QUALITY_THRESHOLDS = {
-    'plddt_good': 0.70,
-    'plddt_acceptable': 0.50,
-    'ipae_good': 0.15,
-    'ipae_acceptable': 0.20,
-    'iptm_good': 0.60,
-    'iptm_acceptable': 0.40,
-    'ptm_good': 0.80,
-    'ptm_acceptable': 0.60,
+    'plddt_good':       _AF_EXCELLENT['mean_plddt_min'],
+    'plddt_acceptable': _AF_PRIMARY['mean_plddt_min'],
+    'ipae_good':        _AF_EXCELLENT['ipae_max'],
+    'ipae_acceptable':  _AF_PRIMARY['ipae_max'],
+    'iptm_good':        _AF_EXCELLENT['iptm_min'],
+    'iptm_acceptable':  _AF_PRIMARY['iptm_min'],
+    'ptm_good':         _AF_EXCELLENT['ptm_min'],
+    'ptm_acceptable':   _AF_PRIMARY['ptm_min'],
 }
 
 

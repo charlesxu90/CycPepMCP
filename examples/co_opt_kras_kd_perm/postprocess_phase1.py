@@ -18,10 +18,20 @@ from pathlib import Path
 
 import pandas as pd
 
-PERM_FAIL_SENTINEL = -10.0
-KD_FAIL_SENTINEL = 5.0
-PERM_PASS_THRESHOLD = -6.0          # raw log cm/s; higher is better
-KD_PASS_LOG_THRESHOLD = 1.0         # raw_kras_kd is log10(KD μM); KD<10 μM → log<1.0
+# Centralized PASS-gate constants (single source of truth: benchmark/configs/workflows.yaml).
+# Walk up to the repo root so `from benchmark.configs import thresholds` works regardless of cwd.
+_HERE = Path(__file__).resolve()
+for _p in [_HERE.parent, *_HERE.parents]:
+    if (_p / "benchmark" / "configs" / "thresholds.py").is_file():
+        if str(_p) not in sys.path:
+            sys.path.insert(0, str(_p))
+        break
+from benchmark.configs import thresholds as cfg  # noqa: E402
+
+PERM_FAIL_SENTINEL = cfg.PERM_FAIL_SENTINEL
+KD_FAIL_SENTINEL = cfg.KD_FAIL_SENTINEL
+PERM_PASS_THRESHOLD = cfg.PERM_PASS_THRESHOLD       # raw log cm/s; higher is better
+KD_PASS_LOG_THRESHOLD = cfg.KD_PASS_LOG_THRESHOLD   # raw_kras_kd is log10(KD μM); KD<10 μM => log<1.0
 
 
 def main() -> int:

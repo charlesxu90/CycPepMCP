@@ -11,7 +11,7 @@
 | Protein | RbtA (rhamnosyltransferase subunit A) |
 | Organism | *Acinetobacter baumannii* |
 | Source | NCBI GenBank PXA52927.1 |
-| PDB (AF2 predicted) | `examples/case2_RbtA_binder_rfpeptides/RbtA_monomer.pdb` |
+| PDB (AF2 predicted) | `examples/binder_rbta/RbtA_monomer.pdb` |
 | Reference structures | 9CDV (apo), 9CDU (complex with RBB_D10) |
 | Chain | A |
 | Residue range | 20-460 (441 residues) |
@@ -43,7 +43,7 @@
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
-| `target_pdb` | `examples/case2_RbtA_binder_rfpeptides/RbtA_monomer.pdb` | |
+| `target_pdb` | `examples/binder_rbta/RbtA_monomer.pdb` | |
 | `hotspot_residues` | [144, 202, 204, 206, 208, 231, 269] | 7 residues spanning the beta-helix surface |
 | `target_chain` | "A" | |
 | `binder_length` | 12 | Variable length 12-16 for flat surface coverage |

@@ -41,62 +41,65 @@ GRAY = [0.5, 0.5, 0.5]
 # Figure size for individual plots
 FIGSIZE = (5, 5)
 
-# Quality thresholds — paper-faithful values from RFpeptides (Nat Chem Biol 2025).
-# Paper Methods 2.4 + Supp. Fig. 4: iPAE / ddG cutoffs vary by target topology;
-# CMS, SAP, pLDDT, RMSD are uniform across targets.
-#
-# Each entry below is annotated with (paper_value, label) so plots can show what
-# the line means. `general` is the fallback when target cannot be auto-detected.
-PAPER_THRESHOLDS = {
-    'mcl1': {
-        'ipae':  (0.30, 'Paper iPAE<0.30 (MCL1, concave pocket)'),
-        'ddg':   (-30, 'Paper ddG<-30 REU'),
-        'sap':   (35,  'Paper SAP<35'),
-        'cms':   (300, 'Paper CMS>300 Å²'),
-        'plddt': (0.70, 'Paper pLDDT>0.70'),
-    },
-    'mdm2': {
-        'ipae':  (0.30, 'Paper iPAE<0.30 (MDM2, concave pocket)'),
-        'ddg':   (-50, 'Paper ddG<-50 REU (MDM2-specific)'),
-        'sap':   (35,  'Paper SAP<35'),
-        'cms':   (300, 'Paper CMS>300 Å²'),
-        'plddt': (0.70, 'Paper pLDDT>0.70'),
-    },
-    'gabarap': {
-        'ipae':  (0.13, 'Paper iPAE<0.13 (GABARAP, shallow groove)'),
-        'ddg':   (-30, 'Paper ddG<-30 REU'),
-        'sap':   (35,  'Paper SAP<35'),
-        'cms':   (300, 'Paper CMS>300 Å²'),
-        'plddt': (0.70, 'Paper pLDDT>0.70'),
-    },
-    'rbta': {
-        'ipae':  (0.40, 'Paper iPAE<0.40 (RbtA, flat β-helix)'),
-        'ddg':   (-30, 'Paper ddG<-30 REU'),
-        'sap':   (35,  'Paper SAP<35'),
-        'cms':   (300, 'Paper CMS>300 Å²'),
-        'plddt': (0.70, 'Paper pLDDT>0.70'),
-    },
-    'general': {
-        'ipae':  (0.30, 'Paper iPAE<0.30 (concave default)'),
-        'ddg':   (-30, 'Paper ddG<-30 REU'),
-        'sap':   (35,  'Paper SAP<35'),
-        'cms':   (300, 'Paper CMS>300 Å²'),
-        'plddt': (0.70, 'Paper pLDDT>0.70'),
-    },
-}
+# Centralized PASS-gate thresholds (single source of truth: benchmark/configs/workflows.yaml).
+# Per-target iPAE/ddG come from rfpeptides.per_target_thresholds; uniform metrics
+# (pLDDT, SAP, CMS) come from the primary/excellent gates.
+import sys as _sys
+_HERE = Path(__file__).resolve()
+for _p in [_HERE.parent, *_HERE.parents]:
+    if (_p / "benchmark" / "configs" / "thresholds.py").is_file():
+        if str(_p) not in _sys.path:
+            _sys.path.insert(0, str(_p))
+        break
+from benchmark.configs import thresholds as cfg  # noqa: E402
+
+_RF_PRIMARY = cfg.RFPEPTIDES_PASS_GATE.primary
+_RF_EXCELLENT = cfg.RFPEPTIDES_PASS_GATE.excellent
+_RF_PER_TARGET = cfg.RFPEPTIDES_PASS_GATE.extras['per_target_thresholds']
+
+
+def _build_paper_thresholds(per_target: dict, primary: dict) -> dict:
+    """Materialize the per-target PAPER_THRESHOLDS structure expected by the
+    rest of the viz from the centralized config. Labels are reconstructed."""
+    descriptions = {
+        'mcl1':    'MCL1, concave pocket',
+        'mdm2':    'MDM2, concave pocket',
+        'gabarap': 'GABARAP, shallow groove',
+        'rbta':    'RbtA, flat beta-helix',
+        'pdl1':    'PD-L1, flat IGV interface',
+        'general': 'concave default',
+    }
+    out = {}
+    for tgt, vals in per_target.items():
+        ipae = vals['ipae']
+        ddg = vals['ddg']
+        ddg_label_extra = ' (MDM2-specific)' if tgt == 'mdm2' and ddg <= -50 else ''
+        out[tgt] = {
+            'ipae':  (ipae, f"Paper iPAE<{ipae:.2f} ({descriptions.get(tgt, tgt)})"),
+            'ddg':   (ddg,  f"Paper ddG<{ddg} REU{ddg_label_extra}"),
+            'sap':   (primary['sap_max'], f"Paper SAP<{primary['sap_max']}"),
+            'cms':   (primary['cms_min'], f"Paper CMS>{primary['cms_min']} A^2"),
+            'plddt': (primary['plddt_min'], f"Paper pLDDT>{primary['plddt_min']:.2f}"),
+        }
+    return out
+
+
+PAPER_THRESHOLDS = _build_paper_thresholds(_RF_PER_TARGET, _RF_PRIMARY)
 
 # Active thresholds (set by configure_thresholds() based on detected target).
+# `_good` => excellent gate (tighter context line); `_acceptable` => primary PASS gate
+# that gets overwritten with the per-target value in configure_thresholds().
 QUALITY_THRESHOLDS = {
-    'ddg_good': -50,         # tighter "excellent" line, for context
-    'ddg_acceptable': -30,   # paper threshold (will be overwritten)
-    'ipae_good': 0.15,
-    'ipae_acceptable': 0.30,
-    'plddt_good': 0.90,
-    'plddt_acceptable': 0.70,
-    'sap_good': 25,
-    'sap_acceptable': 35,
-    'cms_good': 400,
-    'cms_acceptable': 300,
+    'ddg_good':        _RF_EXCELLENT['ddg_max'],
+    'ddg_acceptable':  _RF_PRIMARY['ddg_max_default'],
+    'ipae_good':       _RF_EXCELLENT['ipae_max'],
+    'ipae_acceptable': _RF_PRIMARY['ipae_max_default'],
+    'plddt_good':      _RF_EXCELLENT['plddt_min'],
+    'plddt_acceptable': _RF_PRIMARY['plddt_min'],
+    'sap_good':        _RF_EXCELLENT['sap_max'],
+    'sap_acceptable':  _RF_PRIMARY['sap_max'],
+    'cms_good':        _RF_EXCELLENT['cms_min'],
+    'cms_acceptable':  _RF_PRIMARY['cms_min'],
 }
 
 # Active threshold labels, populated by configure_thresholds().
@@ -110,9 +113,9 @@ THRESHOLD_LABELS = {
 
 
 def detect_target(results_dir) -> str:
-    """Infer target name (mcl1/mdm2/gabarap/rbta) from the results path."""
+    """Infer target name from the results path. Keys mirror per_target_thresholds in workflows.yaml."""
     path = str(results_dir).lower()
-    for key in ('mcl1', 'mdm2', 'gabarap', 'rbta'):
+    for key in ('mcl1', 'mdm2', 'gabarap', 'rbta', 'pdl1'):
         if key in path:
             return key
     return 'general'

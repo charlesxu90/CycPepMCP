@@ -28,16 +28,16 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# Centralized composite-score weights (single source of truth: benchmark/configs/workflows.yaml).
+_HERE = Path(__file__).resolve()
+for _p in [_HERE.parent, *_HERE.parents]:
+    if (_p / "benchmark" / "configs" / "thresholds.py").is_file():
+        if str(_p) not in sys.path:
+            sys.path.insert(0, str(_p))
+        break
+from benchmark.configs import thresholds as cfg  # noqa: E402
 
-WEIGHTS = {
-    "kd":    0.20,
-    "perm":  0.15,
-    "aff":   0.15,
-    "prob":  0.10,
-    "iptm":  0.10,
-    "cnn":   0.15,
-    "vina":  0.15,
-}
+WEIGHTS = dict(cfg.HELMGPT_COMPOSITE_WEIGHTS)
 
 
 def normalize(s: pd.Series, higher_is_better: bool = True) -> pd.Series:

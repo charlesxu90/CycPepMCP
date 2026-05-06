@@ -41,20 +41,32 @@ GRAY = [0.5, 0.5, 0.5]
 # Figure size for individual plots
 FIGSIZE = (5, 5)
 
-# Workflow-faithful thresholds (binder_design_helmgpt.md "Quality Thresholds
-# Reference Table"). Each metric's tuple is (excellent_value, gate_value, label)
-# where gate_value is the workflow's PASS threshold used for filtering /
-# composite scoring and excellent_value is the tighter context line.
+# Centralized PASS-gate thresholds (single source of truth: benchmark/configs/workflows.yaml).
+# Each entry is (excellent_value, gate_value, label); gate_value is the primary PASS gate,
+# excellent_value is the tighter context line.
+import sys as _sys
+from pathlib import Path as _Path
+_HERE = _Path(__file__).resolve()
+for _p in [_HERE.parent, *_HERE.parents]:
+    if (_p / "benchmark" / "configs" / "thresholds.py").is_file():
+        if str(_p) not in _sys.path:
+            _sys.path.insert(0, str(_p))
+        break
+from benchmark.configs import thresholds as cfg  # noqa: E402
+
+_HG_PRIMARY = cfg.HELMGPT_PASS_GATE.primary
+_HG_EXCELLENT = cfg.HELMGPT_PASS_GATE.excellent
+
 WORKFLOW_THRESHOLDS = {
-    'kd':            (1.0,  10.0,  'Workflow gate KD<10 μM (PASS, lower is better)'),
-    'perm':          (-5.0, -6.0,  'Workflow gate perm>-6.0 log cm/s (PASS)'),
-    'boltz_aff':     (0.5,  0.0,   'Workflow gate Boltz-2 affinity>0.0'),
-    'boltz_prob':    (0.6,  0.5,   'Workflow gate Boltz-2 binding prob>0.5'),
-    'boltz_iptm':    (0.80, 0.70,  'Workflow gate Boltz-2 ligand iPTM>0.70'),
-    'af3_iptm':      (0.80, 0.60,  'Workflow gate AF3 iPTM>0.60'),
-    'af3_plddt':     (0.85, 0.70,  'Workflow gate AF3 pLDDT>0.70'),
-    'gnina_cnn':     (7.0,  6.0,   'Workflow gate Gnina CNN pKd>6.0'),
-    'gnina_vina':    (-8.0, -7.0,  'Workflow gate Gnina Vina<-7.0 kcal/mol'),
+    'kd':         (_HG_EXCELLENT['kd_um_max'],         _HG_PRIMARY['kd_um_max'],         f"Workflow gate KD<{_HG_PRIMARY['kd_um_max']} uM (PASS, lower is better)"),
+    'perm':       (_HG_EXCELLENT['perm_logpapp_min'],  _HG_PRIMARY['perm_logpapp_min'],  f"Workflow gate perm>{_HG_PRIMARY['perm_logpapp_min']} log cm/s (PASS)"),
+    'boltz_aff':  (_HG_EXCELLENT['boltz_aff_min'],     _HG_PRIMARY['boltz_aff_min'],     f"Workflow gate Boltz-2 affinity>{_HG_PRIMARY['boltz_aff_min']}"),
+    'boltz_prob': (_HG_EXCELLENT['boltz_prob_min'],    _HG_PRIMARY['boltz_prob_min'],    f"Workflow gate Boltz-2 binding prob>{_HG_PRIMARY['boltz_prob_min']}"),
+    'boltz_iptm': (_HG_EXCELLENT['boltz_iptm_min'],    _HG_PRIMARY['boltz_iptm_min'],    f"Workflow gate Boltz-2 ligand iPTM>{_HG_PRIMARY['boltz_iptm_min']}"),
+    'af3_iptm':   (_HG_EXCELLENT['af3_iptm_min'],      _HG_PRIMARY['af3_iptm_min'],      f"Workflow gate AF3 iPTM>{_HG_PRIMARY['af3_iptm_min']}"),
+    'af3_plddt':  (_HG_EXCELLENT['af3_plddt_min'],     _HG_PRIMARY['af3_plddt_min'],     f"Workflow gate AF3 pLDDT>{_HG_PRIMARY['af3_plddt_min']}"),
+    'gnina_cnn':  (_HG_EXCELLENT['gnina_cnn_min'],     _HG_PRIMARY['gnina_cnn_min'],     f"Workflow gate Gnina CNN pKd>{_HG_PRIMARY['gnina_cnn_min']}"),
+    'gnina_vina': (_HG_EXCELLENT['gnina_vina_max'],    _HG_PRIMARY['gnina_vina_max'],    f"Workflow gate Gnina Vina<{_HG_PRIMARY['gnina_vina_max']} kcal/mol"),
 }
 
 EXCELLENT_LABEL = {
