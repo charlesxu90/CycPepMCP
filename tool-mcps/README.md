@@ -127,7 +127,7 @@ bash quick_setup.sh
 
 ### Docker-based MCPs
 
-Docker MCPs pull pre-built images from `ghcr.io/macronex/` and require:
+Docker MCPs pull pre-built images from `ghcr.io/MacromNex/` and require:
 - Docker with GPU support (`nvidia-container-toolkit`)
 - Sufficient GPU memory (varies by tool)
 
@@ -140,21 +140,21 @@ Docker MCPs pull pre-built images from `ghcr.io/macronex/` and require:
 
 Wraps ColabDesign for cyclic peptide structure prediction, de novo hallucination, fixed-backbone sequence design, and binder design against target proteins. Uses AlphaFold with cyclic offset constraints.
 
-Source: [macronex/afcycdesign_mcp](https://github.com/macronex/afcycdesign_mcp)
+Source: [MacromNex/afcycdesign_mcp](https://github.com/MacromNex/afcycdesign_mcp)
 
 ### alphafold3_mcp
 **AlphaFold3 biomolecular structure prediction** | Docker (GPU)
 
 Full AlphaFold3 for predicting structures of proteins, nucleic acids, small molecules, ions, and their complexes.
 
-Source: [macronex/alphafold3_mcp](https://github.com/macronex/alphafold3_mcp)
+Source: [MacromNex/alphafold3_mcp](https://github.com/MacromNex/alphafold3_mcp)
 
 ### amber_mcp
 **Amber molecular dynamics** | Docker (GPU)
 
 Amber force field simulations including MD, free energy perturbation, and thermodynamic integration for cyclic peptide systems.
 
-Source: [macronex/amber_mcp](https://github.com/macronex/amber_mcp)
+Source: [MacromNex/amber_mcp](https://github.com/MacromNex/amber_mcp)
 
 ### adcp_mcp
 **AutoDock CrankPep** | Conda
@@ -166,21 +166,21 @@ Conformational sampling and docking of cyclic peptides to protein targets using 
 
 Boltz2 for protein structure prediction and binding affinity estimation.
 
-Source: [macronex/boltz_mcp](https://github.com/macronex/boltz_mcp)
+Source: [MacromNex/boltz_mcp](https://github.com/MacromNex/boltz_mcp)
 
 ### boltzgen_mcp
 **BoltzGen binder design** | Docker (GPU)
 
 Generative model for designing protein binders using Boltzmann-inspired generation.
 
-Source: [macronex/boltzgen_mcp](https://github.com/macronex/boltzgen_mcp)
+Source: [MacromNex/boltzgen_mcp](https://github.com/MacromNex/boltzgen_mcp)
 
 ### cpmp_mcp
 **Cyclic peptide membrane permeability (MAT)** | Docker (GPU)
 
 Deep learning model using Molecular Attention Transformer for predicting membrane permeability of cyclic peptides.
 
-Source: [macronex/cpmp_mcp](https://github.com/macronex/cpmp_mcp)
+Source: [MacromNex/cpmp_mcp](https://github.com/MacromNex/cpmp_mcp)
 
 ### cyc_builder_mcp
 **CYC_BUILDER structure-based design** | Conda
@@ -215,35 +215,35 @@ Source: [akiyamalab/cycpeptmp](https://github.com/akiyamalab/cycpeptmp)
 
 GROMACS for molecular dynamics simulations of peptide systems.
 
-Source: [macronex/gromacs_mcp](https://github.com/macronex/gromacs_mcp)
+Source: [MacromNex/gromacs_mcp](https://github.com/MacromNex/gromacs_mcp)
 
 ### haddock3_mcp
 **HADDOCK3 biomolecular docking** | UV
 
 Integrative modeling platform for docking biomolecules using experimental data and computational predictions.
 
-Source: [macronex/haddock3_mcp](https://github.com/macronex/haddock3_mcp)
+Source: [MacromNex/haddock3_mcp](https://github.com/MacromNex/haddock3_mcp)
 
 ### helm_gpt_mcp
 **HELM-GPT macrocyclic peptide design** | Docker (GPU)
 
 GPT-based generative model for de novo design of macrocyclic peptides using HELM notation. Supports prior model training, sequence optimization, and scoring.
 
-Source: [macronex/helm_gpt_mcp](https://github.com/macronex/helm_gpt_mcp)
+Source: [MacromNex/helm_gpt_mcp](https://github.com/MacromNex/helm_gpt_mcp)
 
 ### highfold3_mcp
 **HighFold3 with CycPOEM** | Docker (GPU)
 
 AlphaFold3-based structure prediction enhanced with CycPOEM (Cyclic Peptide Offset Embedding Module) and Cyclization Switch for improved cyclic peptide modeling.
 
-Source: [macronex/highfold3_mcp](https://github.com/macronex/highfold3_mcp)
+Source: [MacromNex/highfold3_mcp](https://github.com/MacromNex/highfold3_mcp)
 
 ### highfold_med_mcp
 **HighFold-Med fine-tuned AlphaFold** | Docker (GPU)
 
 AlphaFold model fine-tuned specifically for cyclic peptide structure prediction with improved accuracy.
 
-Source: [macronex/highfold_med_mcp](https://github.com/macronex/highfold_med_mcp)
+Source: [MacromNex/highfold_med_mcp](https://github.com/MacromNex/highfold_med_mcp)
 
 ### highplay_mcp
 **HighPlay RL sequence design** | UV
@@ -257,7 +257,7 @@ Source: [hongliangduan/HighPlay](https://github.com/hongliangduan/HighPlay)
 
 LigandMPNN for structure-aware protein sequence design, accounting for ligand and small molecule context.
 
-Source: [macronex/ligandmpnn_mcp](https://github.com/macronex/ligandmpnn_mcp)
+Source: [MacromNex/ligandmpnn_mcp](https://github.com/MacromNex/ligandmpnn_mcp)
 
 ### multicycgt_mcp
 **Multi_CycGT permeability prediction** | UV
@@ -299,28 +299,28 @@ Source: [ifyoungnet/PharmPapp](https://github.com/ifyoungnet/PharmPapp)
 
 ProteinMPNN for protein and peptide sequence design from backbone structures. Supports simple design, constrained design, CA-only design, sequence scoring, and batch processing.
 
-Source: [macronex/proteinmpnn_mcp](https://github.com/macronex/proteinmpnn_mcp)
+Source: [MacromNex/proteinmpnn_mcp](https://github.com/MacromNex/proteinmpnn_mcp)
 
 ### rfpeptides_mcp
 **RFpeptides backbone generation** | Docker (GPU)
 
 RFDiffusion All-Atom adapted for cyclic peptide backbone generation against protein targets. Core tool in the binder design workflow.
 
-Source: [macronex/rfpeptides_mcp](https://github.com/macronex/rfpeptides_mcp)
+Source: [MacromNex/rfpeptides_mcp](https://github.com/MacromNex/rfpeptides_mcp)
 
 ### rosetta_kic_mcp
 **Rosetta KIC/GenKIC modeling** | Docker (GPU)
 
 Rosetta Kinematic Closure and GeneralizedKIC protocols for cyclic peptide loop modeling, relaxation, and interface energy analysis (ddG, SAP, CMS).
 
-Source: [macronex/rosetta_kic_mcp](https://github.com/macronex/rosetta_kic_mcp)
+Source: [MacromNex/rosetta_kic_mcp](https://github.com/MacromNex/rosetta_kic_mcp)
 
 ### rosetta_mcp
 **Rosetta suite modeling and design** | Docker (GPU)
 
 General-purpose Rosetta MCP server for protein modeling and design including relaxation, scoring, ab initio folding, and structure manipulation.
 
-Source: [macronex/rosetta_mcp](https://github.com/macronex/rosetta_mcp)
+Source: [MacromNex/rosetta_mcp](https://github.com/MacromNex/rosetta_mcp)
 
 ---
 

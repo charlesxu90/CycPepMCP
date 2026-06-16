@@ -23,7 +23,7 @@ mcps:
     - --gpus
     - all
     - --ipc=host
-    docker_image: ghcr.io/macronex/afcycdesign_mcp:latest
+    docker_image: ghcr.io/MacromNex/afcycdesign_mcp:latest
     docker_volumes: []
     cache_model:
       subpath: alphafold2/params
@@ -38,7 +38,7 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/afcycdesign_mcp
+    url: https://github.com/MacromNex/afcycdesign_mcp
   alphafold3_mcp:
     dependencies: []
     description: AlphaFold3 for biomolecular structure prediction
@@ -46,7 +46,7 @@ mcps:
     - --gpus
     - all
     - --ipc=host
-    docker_image: ghcr.io/macronex/alphafold3_mcp:latest
+    docker_image: ghcr.io/MacromNex/alphafold3_mcp:latest
     docker_volumes: []
     cache_data:
       subpath: af3_db
@@ -64,14 +64,14 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/alphafold3_mcp
+    url: https://github.com/MacromNex/alphafold3_mcp
   amber_mcp:
     dependencies: []
     description: Amber MD simulations and free energy calculations
     docker_args:
     - --gpus
     - all
-    docker_image: ghcr.io/macronex/amber_mcp:latest
+    docker_image: ghcr.io/MacromNex/amber_mcp:latest
     docker_volumes: []
     env_vars: {}
     path: tool-mcps/amber_mcp
@@ -83,7 +83,7 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/amber_mcp
+    url: https://github.com/MacromNex/amber_mcp
   boltz_mcp:
     dependencies: []
     description: Boltz2 MCP server for protein structure and affinity prediction
@@ -106,7 +106,7 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/boltz_mcp
+    url: https://github.com/MacromNex/boltz_mcp
   boltzgen_mcp:
     dependencies: []
     description: BoltzGen MCP server for protein binder design
@@ -114,7 +114,7 @@ mcps:
     - --gpus
     - all
     - --ipc=host
-    docker_image: ghcr.io/macronex/boltzgen_mcp:latest
+    docker_image: ghcr.io/MacromNex/boltzgen_mcp:latest
     docker_volumes: []
     env_vars: {}
     path: tool-mcps/boltzgen_mcp
@@ -126,14 +126,14 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/boltzgen_mcp
+    url: https://github.com/MacromNex/boltzgen_mcp
   cpmp_mcp:
     dependencies: []
     description: Cyclic Peptide Membrane Permeability prediction using MAT deep learning
     docker_args:
     - --gpus
     - all
-    docker_image: ghcr.io/macronex/cpmp_mcp:latest
+    docker_image: ghcr.io/MacromNex/cpmp_mcp:latest
     docker_volumes: []
     env_vars: {}
     path: tool-mcps/cpmp_mcp
@@ -145,7 +145,7 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/cpmp_mcp
+    url: https://github.com/MacromNex/cpmp_mcp
   cyc_builder_mcp:
     dependencies: []
     description: Structure-based cyclic peptide design with MCTS and fragment assembly
@@ -216,7 +216,7 @@ mcps:
     docker_args:
     - --gpus
     - all
-    docker_image: ghcr.io/macronex/gnina_mcp:latest
+    docker_image: ghcr.io/MacromNex/gnina_mcp:latest
     docker_volumes: []
     env_vars: {}
     path: tool-mcps/gnina_mcp
@@ -235,7 +235,7 @@ mcps:
     docker_args:
     - --gpus
     - all
-    docker_image: ghcr.io/macronex/gromacs_mcp:latest
+    docker_image: ghcr.io/MacromNex/gromacs_mcp:latest
     docker_volumes: []
     env_vars: {}
     path: tool-mcps/gromacs_mcp
@@ -247,7 +247,7 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/gromacs_mcp
+    url: https://github.com/MacromNex/gromacs_mcp
   haddock3_mcp:
     dependencies: []
     description: HADDOCK3 integrative modeling for biomolecular docking
@@ -263,7 +263,7 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/haddock3_mcp
+    url: https://github.com/MacromNex/haddock3_mcp
   helm_gpt_mcp:
     dependencies: []
     description: GPT-based de novo macrocyclic peptide design with HELM support
@@ -271,7 +271,7 @@ mcps:
     - --gpus
     - all
     - --ipc=host
-    docker_image: ghcr.io/macronex/helm_gpt_mcp:latest
+    docker_image: ghcr.io/MacromNex/helm_gpt_mcp:latest
     docker_volumes: []
     cache_data:
       subpath: helmgpt_data
@@ -289,7 +289,7 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/helm_gpt_mcp
+    url: https://github.com/MacromNex/helm_gpt_mcp
   highfold3_mcp:
     dependencies: []
     description: AlphaFold3-based structure prediction with CycPOEM and Cyclization
@@ -298,7 +298,7 @@ mcps:
     - --gpus
     - all
     - --ipc=host
-    docker_image: ghcr.io/macronex/highfold3_mcp:latest
+    docker_image: ghcr.io/MacromNex/highfold3_mcp:latest
     docker_volumes: []
     cache_data:
       subpath: af3_db
@@ -316,7 +316,7 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/highfold3_mcp
+    url: https://github.com/MacromNex/highfold3_mcp
   highfold_med_mcp:
     dependencies: []
     description: Fine-tuned AlphaFold for cyclic peptide structure prediction
@@ -324,7 +324,7 @@ mcps:
     - --gpus
     - all
     - --ipc=host
-    docker_image: ghcr.io/macronex/highfold_med_mcp:latest
+    docker_image: ghcr.io/MacromNex/highfold_med_mcp:latest
     docker_volumes: []
     env_vars: {}
     path: tool-mcps/highfold_med_mcp
@@ -336,7 +336,7 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/highfold_med_mcp
+    url: https://github.com/MacromNex/highfold_med_mcp
   highplay_mcp:
     dependencies: []
     description: RL-based cyclic peptide sequence design using MCTS
@@ -360,7 +360,7 @@ mcps:
     - --gpus
     - all
     - --ipc=host
-    docker_image: ghcr.io/macronex/ligandmpnn_mcp:latest
+    docker_image: ghcr.io/MacromNex/ligandmpnn_mcp:latest
     docker_volumes: []
     env_vars: {}
     path: tool-mcps/ligandmpnn_mcp
@@ -372,7 +372,7 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/ligandmpnn_mcp
+    url: https://github.com/MacromNex/ligandmpnn_mcp
   multicycgt_mcp:
     dependencies: []
     description: GCN+Transformer multimodal model for membrane permeability prediction
@@ -460,7 +460,7 @@ mcps:
     - --gpus
     - all
     - --ipc=host
-    docker_image: ghcr.io/macronex/proteinmpnn_mcp:latest
+    docker_image: ghcr.io/MacromNex/proteinmpnn_mcp:latest
     docker_volumes: []
     env_vars: {}
     path: tool-mcps/proteinmpnn_mcp
@@ -472,7 +472,7 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/proteinmpnn_mcp
+    url: https://github.com/MacromNex/proteinmpnn_mcp
   rfpeptides_mcp:
     dependencies: []
     description: RFDiffusion All-Atom for cyclic peptide backbone generation
@@ -480,7 +480,7 @@ mcps:
     - --gpus
     - all
     - --ipc=host
-    docker_image: ghcr.io/macronex/rfpeptides_mcp:latest
+    docker_image: ghcr.io/MacromNex/rfpeptides_mcp:latest
     docker_volumes: []
     cache_model:
       subpath: rfpeptides/models
@@ -495,14 +495,14 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/rfpeptides_mcp
+    url: https://github.com/MacromNex/rfpeptides_mcp
   rosetta_kic_mcp:
     dependencies: []
     description: Rosetta KIC and GeneralizedKIC protocols for cyclic peptide modeling
     docker_args:
     - --gpus
     - all
-    docker_image: ghcr.io/macronex/rosetta_kic_mcp:latest
+    docker_image: ghcr.io/MacromNex/rosetta_kic_mcp:latest
     docker_volumes: []
     env_vars: {}
     path: tool-mcps/rosetta_kic_mcp
@@ -514,14 +514,14 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/rosetta_kic_mcp
+    url: https://github.com/MacromNex/rosetta_kic_mcp
   rosetta_mcp:
     dependencies: []
     description: Protein modeling and design using the Rosetta suite via Docker
     docker_args:
     - --gpus
     - all
-    docker_image: ghcr.io/macronex/rosetta_mcp:latest
+    docker_image: ghcr.io/MacromNex/rosetta_mcp:latest
     docker_volumes: []
     env_vars: {}
     path: tool-mcps/rosetta_mcp
@@ -533,4 +533,4 @@ mcps:
     setup_commands: []
     setup_script: quick_setup.sh
     source: Tool
-    url: https://github.com/macronex/rosetta_mcp
+    url: https://github.com/MacromNex/rosetta_mcp
