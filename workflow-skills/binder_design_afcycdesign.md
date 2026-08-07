@@ -311,13 +311,13 @@ The script auto-detects `afcycdesign_results.csv` in the output directory (gener
   binder_<job_id_2>.log
   binder_<job_id_2>_metadata.json
   afcycdesign_results.csv            # Summary metrics table
-  summary_1_plddt.png                # Visualization figures
-  summary_2_ipae.png
-  summary_3_scatter.png
-  summary_4_ranking.png
-  summary_5_table.png
-  summary_6_iptm.png
-  summary_merged.png                 # (if --merged)
+  afcycdesign_plddt_scores.pdf       # Visualization figures (vector PDF only)
+  afcycdesign_ipae_comparison.pdf    # (or _loss_comparison.pdf when iPAE absent)
+  afcycdesign_quality_scatter.pdf
+  afcycdesign_design_ranking.pdf
+  afcycdesign_metrics_table.pdf
+  afcycdesign_iptm_scores.pdf
+  afcycdesign_summary.pdf            # (if --merged)
 ```
 
 ## Output Format
@@ -355,7 +355,7 @@ Present results in this format:
 - Complex PDB: `{output_dir}/binder_{job_id}.pdb`
 - Optimization log: `{output_dir}/binder_{job_id}.log`
 - Results CSV: `{output_dir}/afcycdesign_results.csv`
-- Figures: `{output_dir}/summary_*.png`
+- Figures: `{output_dir}/afcycdesign_*.pdf`
 ```
 
 ## Error Handling

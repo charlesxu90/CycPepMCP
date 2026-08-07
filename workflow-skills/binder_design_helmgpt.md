@@ -600,7 +600,7 @@ Two weight schemes depending on heavy-atom routing. **`postprocess_phase3.py` im
 
 ## Phase 3.5: Visualization
 
-After Phase 3 ranking, generate publication-quality figures with `workflow-skills/scripts/helmgpt/helmgpt_viz.py`. The script reads `phase3_final_ranking.csv` (consolidated case3 schema) or the legacy multi-file layout and emits PDF + PNG for every panel. Threshold lines on every distribution plot are pulled directly from the **Quality Thresholds Reference Table** below — solid prominent line = workflow PASS gate, dashed faint line = "Excellent" tier — keeping the figures self-documenting.
+After Phase 3 ranking, generate publication-quality figures with `workflow-skills/scripts/helmgpt/helmgpt_viz.py`. The script reads `phase3_final_ranking.csv` (consolidated case3 schema) or the legacy multi-file layout and emits a print-sized, Illustrator-editable PDF for every panel (no rasters). Threshold lines on every distribution plot are pulled directly from the **Quality Thresholds Reference Table** below — solid prominent line = workflow PASS gate, dashed faint line = "Excellent" tier — keeping the figures self-documenting.
 
 **Invocation:**
 
