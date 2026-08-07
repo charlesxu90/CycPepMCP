@@ -10,7 +10,10 @@ Generates separate figures after binder design workflow:
 5. Metrics Table - Top designs with all metrics
 6. iPTM Scores - Bar chart of interface pTM scores
 
-Each figure is saved as a separate 4x4 inch file.
+Every figure is saved as a print-sized PDF only (no PNG/SVG), styled through
+`workflow-skills/scripts/plot_style_utils.py`: Arial at 6-7 pt, 0.3 pt axes,
+2 pt data markers, mm-accurate Nature column widths, and `pdf.fonttype=42` so
+all text stays editable in Illustrator.
 A merged 2x3 summary figure can also be generated.
 """
 
@@ -28,7 +31,20 @@ from matplotlib.patches import Rectangle
 from matplotlib.table import Table
 import numpy as np
 import pandas as pd
-import seaborn as sns
+
+# Shared Nature-style figure vocabulary (fonts, line widths, dot size, sizes).
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+from plot_style_utils import (  # noqa: E402
+    ANNOT_FONTSIZE, BAR_EDGE_LW, BAR_MM, BASE_FONTSIZE, CAT_PALETTE,
+    CONTEXT_LW, DEFAULT_FIGURE_RCPARAMS, DOT_ALPHA, DOT_SIZE, GATE_LW,
+    MERGED_2x3_SIZE, PANEL_SIZE, RULE_LW, SCATTER_SIZE, TABLE_FONTSIZE,
+    TABLE_SIZE, TITLE_FONTSIZE, XLABEL_FONTSIZE, annotate_offscale,
+    apply_nature_rcparams, mm_size, prettify_ax, save_pdf, simple_ax, stat_box,
+    style_axis_vbar, style_box, style_colorbar, style_violin, thin_legend,
+    tier_color,
+)
 
 # Centralized PASS-gate thresholds (single source of truth: benchmark/configs/workflows.yaml).
 _HERE = Path(__file__).resolve()
@@ -39,23 +55,21 @@ for _p in [_HERE.parent, *_HERE.parents]:
         break
 from benchmark.configs import thresholds as cfg  # noqa: E402
 
-# Color palettes
-CAT_PALETTE = sns.color_palette('colorblind')
-DIV_PALETTE = sns.color_palette("BrBG_r", 100)
-SEQ_PALETTE = sns.cubehelix_palette(100, start=0.5, rot=-0.75)
-GRAY = [0.5, 0.5, 0.5]
+# Figure size for individual distribution plots (45 x 40 mm print size).
+FIGSIZE = PANEL_SIZE
 
-# Figure size for individual plots
-FIGSIZE = (4, 4)
 
 # Adaptive figure size based on number of designs
-def adaptive_figsize(n_designs, base=(4, 4)):
-    """Return a figure size that scales with number of designs."""
-    if n_designs <= 10:
-        return base
-    w = max(base[0], n_designs * 0.28)
-    h = max(base[1], 5)
-    return (w, h)
+def adaptive_figsize(n_designs, base_mm=BAR_MM):
+    """Print width for a per-design bar chart, widened for large design sets.
+
+    Starts at the single-column width and grows by 1.5 mm per design past 40,
+    capped at double-column width so the page stays printable.
+    """
+    width_mm, height_mm = base_mm
+    if n_designs > 40:
+        width_mm = min(183.0, width_mm + (n_designs - 40) * 1.5)
+    return mm_size(width_mm, height_mm)
 
 # Quality thresholds for AfCycDesign pipeline.
 # `_good` => excellent gate (tighter line); `_acceptable` => primary PASS gate.
@@ -73,53 +87,32 @@ QUALITY_THRESHOLDS = {
     'ptm_acceptable':   _AF_PRIMARY['ptm_min'],
 }
 
+# AF2 hallucination loss has no gate in workflows.yaml; these are the
+# viz-internal context lines used when a run predates iPAE reporting.
+LOSS_THRESHOLDS = {'good': 2.0, 'acceptable': 3.0}
 
-def prettify_ax(ax):
-    """Make axes more pleasant to look at."""
-    for i, spine in enumerate(ax.spines.values()):
-        if i == 3 or i == 1:  # top and right
-            spine.set_visible(False)
-    ax.set_frameon = True
-    ax.tick_params(direction='out', length=3, color='k')
-    ax.set_axisbelow(True)
-
-
-def simple_ax(figsize=FIGSIZE, **kwargs):
-    """Shortcut to make and 'prettify' a simple figure with 1 axis."""
-    fig = plt.figure(figsize=figsize)
-    ax = fig.add_subplot(111, **kwargs)
-    prettify_ax(ax)
-    return fig, ax
+# Fixed axis ranges for the quality scatter. Auto-scaling made the same design
+# land at a different position in every batch, so the panel is pinned instead
+# and stays visually comparable across runs. annotate_offscale() flags any
+# design the window excludes.
+SCATTER_XLIM = (0.5, 1.0)                      # pLDDT
+SCATTER_YLIM = {'iPAE': (0.0, 0.5), 'loss': (1.5, 2.75)}
 
 
-def set_pub_plot_context(context="talk"):
-    """Set publication-quality plot context."""
-    sns.set(style="white", context=context)
+def set_pub_plot_context(context=None):
+    """Apply the Nature print rcParams (Arial, 7 pt titles, 6 pt body)."""
+    apply_nature_rcparams(DEFAULT_FIGURE_RCPARAMS)
 
 
-def save_for_pub(fig, path, dpi=300, include_raster=True):
-    """Save figure in publication-ready formats."""
-    fig.savefig(path + ".pdf", dpi=dpi, bbox_inches='tight', transparent=True)
-    if include_raster:
-        fig.savefig(path + ".png", dpi=dpi, bbox_inches='tight', transparent=True)
+def save_for_pub(fig, path):
+    """Save figure as a single editable-text PDF."""
+    return save_pdf(fig, path)
 
 
 def get_color_for_value(value, threshold_good, threshold_acceptable, higher_is_better=True):
-    """Get color based on quality thresholds."""
-    if higher_is_better:
-        if value >= threshold_good:
-            return CAT_PALETTE[2]  # Green
-        elif value >= threshold_acceptable:
-            return CAT_PALETTE[1]  # Orange
-        else:
-            return CAT_PALETTE[3]  # Red
-    else:
-        if value <= threshold_good:
-            return CAT_PALETTE[2]  # Green
-        elif value <= threshold_acceptable:
-            return CAT_PALETTE[1]  # Orange
-        else:
-            return CAT_PALETTE[3]  # Red
+    """Quality-tier colour for a metric value (see plot_style_utils.tier_color)."""
+    return tier_color(value, threshold_good, threshold_acceptable,
+                      higher_is_better=higher_is_better)
 
 
 def load_afcyc_json_files(results_dir: Path) -> pd.DataFrame:
@@ -328,69 +321,73 @@ def calculate_composite_score(df: pd.DataFrame) -> pd.Series:
 
 
 # ============================================================
+# Shared violin + strip panel
+# ============================================================
+
+def plot_violin_strip(values, title, ylabel, thresholds, higher_is_better=True,
+                      palette_idx=0, output_path=None, legend_loc='lower left',
+                      ylim=None, threshold_labels=('Excellent', 'Acceptable')):
+    """Violin + box + strip distribution panel at print size.
+
+    `thresholds` is (excellent, acceptable): the acceptable gate is drawn solid
+    and prominent, the tighter excellent tier dashed and faint.
+    """
+    fig, ax = simple_ax(figsize=FIGSIZE)
+    style_axis_vbar(ax)
+
+    parts = ax.violinplot(values, positions=[0], showmeans=False,
+                          showmedians=False, showextrema=False)
+    style_violin(parts, CAT_PALETTE[palette_idx])
+
+    bp = ax.boxplot(values, positions=[0], widths=0.15, patch_artist=True,
+                    showfliers=False, zorder=2)
+    style_box(bp)
+
+    jitter = np.random.default_rng(42).uniform(-0.12, 0.12, len(values))
+    colors = [get_color_for_value(v, thresholds[0], thresholds[1],
+                                   higher_is_better=higher_is_better)
+              for v in values]
+    ax.scatter(jitter, values, c=colors, s=DOT_SIZE, alpha=DOT_ALPHA,
+               linewidths=0, zorder=3)
+
+    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='-', alpha=0.9,
+               linewidth=GATE_LW,
+               label=f"{threshold_labels[1]} ({thresholds[1]:g})")
+    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.7,
+               linewidth=CONTEXT_LW,
+               label=f"{threshold_labels[0]} ({thresholds[0]:g})")
+    thin_legend(ax, loc=legend_loc)
+
+    median = np.median(values)
+    mean = np.mean(values)
+    stat_box(ax, f'n={len(values)}\nmedian={median:.2f}\nmean={mean:.2f}')
+
+    ax.set_title(title, fontsize=TITLE_FONTSIZE, pad=4)
+    ax.set_ylabel(ylabel)
+    ax.set_xlim(-0.5, 0.5)
+    ax.set_xticks([])
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+
+    plt.tight_layout()
+    if output_path:
+        save_for_pub(fig, output_path)
+    return fig
+
+
+# ============================================================
 # Figure 1: pLDDT Scores
 # ============================================================
 
 def plot_plddt_comparison(df: pd.DataFrame, output_path: str = None):
     """Plot 1: Distribution of pLDDT scores using violin + strip plot."""
-    fig, ax = simple_ax(figsize=(5, 5))
-
     values = df['pLDDT'].values
-
-    # Violin plot for density
-    parts = ax.violinplot(values, positions=[0], showmeans=False,
-                          showmedians=False, showextrema=False)
-    for pc in parts['bodies']:
-        pc.set_facecolor(CAT_PALETTE[0])
-        pc.set_alpha(0.2)
-
-    # Box plot overlay (thin)
-    bp = ax.boxplot(values, positions=[0], widths=0.15, patch_artist=True,
-                    showfliers=False, zorder=2)
-    bp['boxes'][0].set_facecolor('white')
-    bp['boxes'][0].set_alpha(0.8)
-    bp['medians'][0].set_color('black')
-    bp['medians'][0].set_linewidth(1.5)
-
-    # Strip plot (jittered individual points)
-    jitter = np.random.default_rng(42).uniform(-0.12, 0.12, len(values))
-    colors = [get_color_for_value(v, QUALITY_THRESHOLDS['plddt_good'],
-                                   QUALITY_THRESHOLDS['plddt_acceptable'],
-                                   higher_is_better=True)
-              for v in values]
-    ax.scatter(jitter, values, c=colors, s=40, alpha=0.7, edgecolors='white',
-               linewidth=0.5, zorder=3)
-
-    # Threshold lines
-    ax.axhline(y=QUALITY_THRESHOLDS['plddt_good'], color=CAT_PALETTE[2],
-               linestyle='--', alpha=0.7, linewidth=1,
-               label=f"Good (>{QUALITY_THRESHOLDS['plddt_good']})")
-    ax.axhline(y=QUALITY_THRESHOLDS['plddt_acceptable'], color=CAT_PALETTE[1],
-               linestyle='--', alpha=0.7, linewidth=1,
-               label=f"Acceptable (>{QUALITY_THRESHOLDS['plddt_acceptable']})")
-
-    # Summary stats annotation
-    median = np.median(values)
-    mean = np.mean(values)
-    ax.text(0.95, 0.97, f'n={len(values)}\nmedian={median:.2f}\nmean={mean:.2f}',
-            transform=ax.transAxes, fontsize=9, va='top', ha='right',
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
-
-    ax.set_title('pLDDT Distribution', fontsize=14, fontweight='bold', pad=12)
-    ax.set_ylabel('pLDDT (higher is better)', fontsize=11)
-    ax.set_xlim(-0.5, 0.5)
-    ax.set_xticks([])
-    ax.set_ylim(min(values) - 0.05, 1.05)
-    ax.yaxis.grid(True, linestyle='--', alpha=0.4)
-    ax.legend(loc='lower right', fontsize=9)
-
-    plt.tight_layout()
-
-    if output_path:
-        save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
-
-    return fig
+    return plot_violin_strip(
+        values, 'pLDDT distribution', 'pLDDT (higher is better)',
+        (QUALITY_THRESHOLDS['plddt_good'], QUALITY_THRESHOLDS['plddt_acceptable']),
+        higher_is_better=True, palette_idx=0, output_path=output_path,
+        legend_loc='lower right', ylim=(min(values) - 0.05, 1.05),
+        threshold_labels=('Excellent pLDDT', 'PASS gate pLDDT'))
 
 
 # ============================================================
@@ -402,6 +399,7 @@ def plot_ipae_comparison(df: pd.DataFrame, output_path: str = None):
     n_designs = len(df)
     figsize = adaptive_figsize(n_designs)
     fig, ax = simple_ax(figsize=figsize)
+    style_axis_vbar(ax)
 
     df_sorted = df.sort_values('iPAE', ascending=True).reset_index(drop=True)
     x_pos = np.arange(n_designs)
@@ -411,32 +409,31 @@ def plot_ipae_comparison(df: pd.DataFrame, output_path: str = None):
                                    higher_is_better=False)
               for v in df_sorted['iPAE']]
 
-    ax.bar(x_pos, df_sorted['iPAE'], color=colors, alpha=0.9, width=0.8)
+    ax.bar(x_pos, df_sorted['iPAE'], color=colors, width=0.8,
+           edgecolor='white', linewidth=BAR_EDGE_LW)
 
-    ax.axhline(y=QUALITY_THRESHOLDS['ipae_good'], color=CAT_PALETTE[2],
-               linestyle='--', alpha=0.7, linewidth=1,
-               label=f"Good (<{QUALITY_THRESHOLDS['ipae_good']})")
     ax.axhline(y=QUALITY_THRESHOLDS['ipae_acceptable'], color=CAT_PALETTE[1],
-               linestyle='--', alpha=0.7, linewidth=1,
-               label=f"Acceptable (<{QUALITY_THRESHOLDS['ipae_acceptable']})")
+               linestyle='-', alpha=0.9, linewidth=GATE_LW,
+               label=f"PASS gate iPAE (<{QUALITY_THRESHOLDS['ipae_acceptable']})")
+    ax.axhline(y=QUALITY_THRESHOLDS['ipae_good'], color=CAT_PALETTE[2],
+               linestyle='--', alpha=0.7, linewidth=CONTEXT_LW,
+               label=f"Excellent iPAE (<{QUALITY_THRESHOLDS['ipae_good']})")
 
-    ax.set_title('Interface iPAE', fontsize=14, fontweight='bold', pad=12)
-    ax.set_ylabel('iPAE (lower is better)', fontsize=11)
-    ax.set_xlabel('Design', fontsize=11)
+    ax.set_title('Interface iPAE', fontsize=TITLE_FONTSIZE, pad=4)
+    ax.set_ylabel('iPAE (lower is better)')
+    ax.set_xlabel('Design', fontsize=XLABEL_FONTSIZE)
     ax.set_xticks(x_pos)
 
     labels = [simplify_design_id(name) for name in df_sorted['design_id']]
-    tick_fontsize = max(5, min(8, 200 // n_designs))
-    ax.set_xticklabels(labels, fontsize=tick_fontsize, rotation=90, ha='center')
+    ax.set_xticklabels(labels, fontsize=ANNOT_FONTSIZE, rotation=90, ha='center')
+    ax.set_xlim(-0.8, n_designs - 0.2)
 
-    ax.yaxis.grid(True, linestyle='--', alpha=0.4)
-    ax.legend(loc='upper right', fontsize=9)
+    thin_legend(ax, loc='upper left')
 
     plt.tight_layout()
 
     if output_path:
         save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
 
     return fig
 
@@ -447,61 +444,12 @@ def plot_ipae_comparison(df: pd.DataFrame, output_path: str = None):
 
 def plot_loss_comparison(df: pd.DataFrame, output_path: str = None):
     """Plot 2b: Distribution of loss scores using violin + strip plot."""
-    fig, ax = simple_ax(figsize=(5, 5))
-
-    values = df['loss'].values
-
-    # Violin plot for density
-    parts = ax.violinplot(values, positions=[0], showmeans=False,
-                          showmedians=False, showextrema=False)
-    for pc in parts['bodies']:
-        pc.set_facecolor(CAT_PALETTE[0])
-        pc.set_alpha(0.2)
-
-    # Box plot overlay
-    bp = ax.boxplot(values, positions=[0], widths=0.15, patch_artist=True,
-                    showfliers=False, zorder=2)
-    bp['boxes'][0].set_facecolor('white')
-    bp['boxes'][0].set_alpha(0.8)
-    bp['medians'][0].set_color('black')
-    bp['medians'][0].set_linewidth(1.5)
-
-    # Strip plot (jittered individual points)
-    jitter = np.random.default_rng(42).uniform(-0.12, 0.12, len(values))
-    colors = [get_color_for_value(v, 2.0, 3.0, higher_is_better=False)
-              for v in values]
-    ax.scatter(jitter, values, c=colors, s=40, alpha=0.7, edgecolors='white',
-               linewidth=0.5, zorder=3)
-
-    # Threshold lines
-    ax.axhline(y=2.0, color=CAT_PALETTE[2],
-               linestyle='--', alpha=0.7, linewidth=1,
-               label='Good (<2.0)')
-    ax.axhline(y=3.0, color=CAT_PALETTE[1],
-               linestyle='--', alpha=0.7, linewidth=1,
-               label='Acceptable (<3.0)')
-
-    # Summary stats
-    median = np.median(values)
-    mean = np.mean(values)
-    ax.text(0.95, 0.97, f'n={len(values)}\nmedian={median:.2f}\nmean={mean:.2f}',
-            transform=ax.transAxes, fontsize=9, va='top', ha='right',
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
-
-    ax.set_title('Loss Distribution', fontsize=14, fontweight='bold', pad=12)
-    ax.set_ylabel('Loss (lower is better)', fontsize=11)
-    ax.set_xlim(-0.5, 0.5)
-    ax.set_xticks([])
-    ax.yaxis.grid(True, linestyle='--', alpha=0.4)
-    ax.legend(loc='upper right', fontsize=9)
-
-    plt.tight_layout()
-
-    if output_path:
-        save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
-
-    return fig
+    return plot_violin_strip(
+        df['loss'].values, 'Loss distribution', 'Loss (lower is better)',
+        (LOSS_THRESHOLDS['good'], LOSS_THRESHOLDS['acceptable']),
+        higher_is_better=False, palette_idx=0, output_path=output_path,
+        legend_loc='upper left',
+        threshold_labels=('Excellent loss', 'Acceptable loss'))
 
 
 # ============================================================
@@ -510,7 +458,8 @@ def plot_loss_comparison(df: pd.DataFrame, output_path: str = None):
 
 def plot_quality_scatter(df: pd.DataFrame, output_path: str = None):
     """Plot 3: Scatter plot of pLDDT vs iPAE (or loss) colored by composite score."""
-    fig, ax = simple_ax(figsize=(6, 5))
+    fig, ax = simple_ax(figsize=SCATTER_SIZE)
+    style_axis_vbar(ax)
 
     scores = calculate_composite_score(df)
 
@@ -522,48 +471,53 @@ def plot_quality_scatter(df: pd.DataFrame, output_path: str = None):
     elif 'loss' in df.columns:
         y_metric = 'loss'
         y_label = 'Loss (lower is better)'
-        y_thresh_good = 2.0
+        y_thresh_good = LOSS_THRESHOLDS['good']
     else:
         y_metric = None
 
     if y_metric is None:
         ax.text(0.5, 0.5, 'Scatter data\nnot available', ha='center', va='center',
-                transform=ax.transAxes, fontsize=12)
+                transform=ax.transAxes, fontsize=BASE_FONTSIZE)
         ax.axis('off')
     else:
+        x_lo, x_hi = SCATTER_XLIM
+        y_lo, y_hi = SCATTER_YLIM[y_metric]
+
         scatter = ax.scatter(df['pLDDT'], df[y_metric], c=scores, cmap='viridis',
-                            s=80, alpha=0.8, edgecolors='white', linewidth=0.5)
+                            s=DOT_SIZE, alpha=DOT_ALPHA, linewidths=0)
 
         # Good zone
-        y_min = df[y_metric].min() * 0.95
-        rect_good = Rectangle((QUALITY_THRESHOLDS['plddt_good'], y_min),
-                              1.0 - QUALITY_THRESHOLDS['plddt_good'],
-                              y_thresh_good - y_min,
-                              linewidth=0, facecolor=CAT_PALETTE[2], alpha=0.1)
+        rect_good = Rectangle((QUALITY_THRESHOLDS['plddt_good'], y_lo),
+                              x_hi - QUALITY_THRESHOLDS['plddt_good'],
+                              y_thresh_good - y_lo,
+                              linewidth=0, facecolor=CAT_PALETTE[2], alpha=0.10)
         ax.add_patch(rect_good)
 
         ax.axvline(x=QUALITY_THRESHOLDS['plddt_good'], color=CAT_PALETTE[2],
-                   linestyle='--', alpha=0.5, linewidth=1)
+                   linestyle='--', alpha=0.7, linewidth=CONTEXT_LW)
         ax.axhline(y=y_thresh_good, color=CAT_PALETTE[2],
-                   linestyle='--', alpha=0.5, linewidth=1)
+                   linestyle='--', alpha=0.7, linewidth=CONTEXT_LW)
 
-        ax.set_title('Quality Distribution', fontsize=14, fontweight='bold', pad=12)
-        ax.set_xlabel('pLDDT (higher is better)', fontsize=11)
-        ax.set_ylabel(y_label, fontsize=11)
+        ax.set_title('Quality distribution', fontsize=TITLE_FONTSIZE, pad=4)
+        ax.set_xlabel('pLDDT (higher is better)', fontsize=XLABEL_FONTSIZE)
+        ax.set_ylabel(y_label)
+        ax.set_xlim(x_lo, x_hi)
+        ax.set_ylim(y_lo, y_hi)
+        annotate_offscale(ax, df['pLDDT'], df[y_metric],
+                          SCATTER_XLIM, SCATTER_YLIM[y_metric])
 
-        cbar = plt.colorbar(scatter, ax=ax, shrink=0.8)
-        cbar.set_label('Composite Score', fontsize=10)
+        cbar = plt.colorbar(scatter, ax=ax, shrink=0.85, aspect=22, pad=0.03)
+        style_colorbar(cbar, 'Composite score')
 
-        ax.text(QUALITY_THRESHOLDS['plddt_good'] + 0.02,
-                y_min + (y_thresh_good - y_min) * 0.1,
-                'Good Zone', fontsize=9, color=CAT_PALETTE[2], alpha=0.8,
-                fontweight='bold', ha='left')
+        ax.text(QUALITY_THRESHOLDS['plddt_good'] + 0.01,
+                y_lo + (y_thresh_good - y_lo) * 0.06,
+                'Good zone', fontsize=ANNOT_FONTSIZE, color=CAT_PALETTE[2],
+                ha='left')
 
     plt.tight_layout()
 
     if output_path:
         save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
 
     return fig
 
@@ -574,54 +528,42 @@ def plot_quality_scatter(df: pd.DataFrame, output_path: str = None):
 
 def plot_design_ranking(df: pd.DataFrame, output_path: str = None):
     """Plot 4: Distribution of composite scores using violin + strip plot."""
-    fig, ax = simple_ax(figsize=(5, 5))
+    fig, ax = simple_ax(figsize=SCATTER_SIZE)
+    style_axis_vbar(ax)
 
     df = df.copy()
     df['score'] = calculate_composite_score(df)
     values = df['score'].values
 
-    # Violin plot for density
     parts = ax.violinplot(values, positions=[0], showmeans=False,
                           showmedians=False, showextrema=False)
-    for pc in parts['bodies']:
-        pc.set_facecolor(CAT_PALETTE[4])
-        pc.set_alpha(0.2)
+    style_violin(parts, CAT_PALETTE[4])
 
-    # Box plot overlay
     bp = ax.boxplot(values, positions=[0], widths=0.15, patch_artist=True,
                     showfliers=False, zorder=2)
-    bp['boxes'][0].set_facecolor('white')
-    bp['boxes'][0].set_alpha(0.8)
-    bp['medians'][0].set_color('black')
-    bp['medians'][0].set_linewidth(1.5)
+    style_box(bp)
 
     # Strip plot (jittered, colored by score)
     jitter = np.random.default_rng(42).uniform(-0.12, 0.12, len(values))
     scatter = ax.scatter(jitter, values, c=values, cmap='viridis',
-                         s=40, alpha=0.7, edgecolors='white',
-                         linewidth=0.5, zorder=3)
+                         s=DOT_SIZE, alpha=DOT_ALPHA, linewidths=0, zorder=3)
 
-    cbar = plt.colorbar(scatter, ax=ax, shrink=0.7, pad=0.08)
-    cbar.set_label('Score', fontsize=9)
+    cbar = plt.colorbar(scatter, ax=ax, shrink=0.85, aspect=22, pad=0.05)
+    style_colorbar(cbar, 'Score')
 
-    # Summary stats
     median = np.median(values)
     mean = np.mean(values)
-    ax.text(0.95, 0.97, f'n={len(values)}\nmedian={median:.2f}\nmean={mean:.2f}',
-            transform=ax.transAxes, fontsize=9, va='top', ha='right',
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
+    stat_box(ax, f'n={len(values)}\nmedian={median:.2f}\nmean={mean:.2f}')
 
-    ax.set_title('Composite Score Distribution', fontsize=14, fontweight='bold', pad=12)
-    ax.set_ylabel('Composite Score', fontsize=11)
+    ax.set_title('Composite score distribution', fontsize=TITLE_FONTSIZE, pad=4)
+    ax.set_ylabel('Composite score')
     ax.set_xlim(-0.5, 0.5)
     ax.set_xticks([])
-    ax.yaxis.grid(True, linestyle='--', alpha=0.4)
 
     plt.tight_layout()
 
     if output_path:
         save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
 
     return fig
 
@@ -632,10 +574,10 @@ def plot_design_ranking(df: pd.DataFrame, output_path: str = None):
 
 def plot_metrics_table(df: pd.DataFrame, output_path: str = None, top_n: int = 6):
     """Plot 5: Table showing top designs with pLDDT, iPTM, and composite score."""
-    fig = plt.figure(figsize=(5, 4))
+    fig = plt.figure(figsize=TABLE_SIZE)
     ax = fig.add_subplot(111)
     ax.axis('off')
-    ax.set_title('Top Designs', fontsize=14, fontweight='bold', pad=12)
+    ax.set_title('Top designs', fontsize=TITLE_FONTSIZE, pad=4)
 
     df = df.copy()
     df['score'] = calculate_composite_score(df)
@@ -658,11 +600,13 @@ def plot_metrics_table(df: pd.DataFrame, output_path: str = None, top_n: int = 6
         cellLoc='center',
         bbox=[0.05, 0.05, 0.90, 0.85]
     )
+    # Size columns to content so long design IDs are not clipped.
+    table.auto_set_column_width(col=list(range(n_cols)))
 
     # Style header
     for j, label in enumerate(col_headers):
         cell = table[(0, j)]
-        cell.set_text_props(text=label, fontweight='bold', fontsize=10)
+        cell.set_text_props(text=label, fontsize=BASE_FONTSIZE)
         cell.set_facecolor('white')
 
     # Fill data
@@ -680,7 +624,7 @@ def plot_metrics_table(df: pd.DataFrame, output_path: str = None, top_n: int = 6
                 text = f'{val:.2f}'
             else:
                 text = f'{val:.2f}'
-            cell.set_text_props(text=text, fontsize=9)
+            cell.set_text_props(text=text, fontsize=TABLE_FONTSIZE)
 
     # Academic three-line style: remove all cell borders, add alternating row shading
     table.auto_set_font_size(False)
@@ -690,7 +634,7 @@ def plot_metrics_table(df: pd.DataFrame, output_path: str = None, top_n: int = 6
         cell.set_height(0.11)
         # Alternate row shading (data rows only)
         if row_idx > 0 and row_idx % 2 == 0:
-            cell.set_facecolor('#F5F5F5')
+            cell.set_facecolor('#F7F7F7')
         elif row_idx > 0:
             cell.set_facecolor('white')
 
@@ -703,7 +647,8 @@ def plot_metrics_table(df: pd.DataFrame, output_path: str = None, top_n: int = 6
     row_h = bbox[3] / n_rows
     y_header_bottom = y_top - row_h
 
-    line_kwargs = dict(color='black', linewidth=1.2, transform=ax.transAxes, clip_on=False)
+    line_kwargs = dict(color='#333333', linewidth=RULE_LW,
+                       transform=ax.transAxes, clip_on=False)
     ax.plot([x_left, x_right], [y_top, y_top], **line_kwargs)           # top line
     ax.plot([x_left, x_right], [y_header_bottom, y_header_bottom], **line_kwargs)  # below header
     ax.plot([x_left, x_right], [y_bottom, y_bottom], **line_kwargs)     # bottom line
@@ -712,7 +657,6 @@ def plot_metrics_table(df: pd.DataFrame, output_path: str = None, top_n: int = 6
 
     if output_path:
         save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
 
     return fig
 
@@ -723,64 +667,13 @@ def plot_metrics_table(df: pd.DataFrame, output_path: str = None, top_n: int = 6
 
 def plot_iptm_comparison(df: pd.DataFrame, output_path: str = None):
     """Plot 6: Distribution of iPTM scores using violin + strip plot."""
-    fig, ax = simple_ax(figsize=(5, 5))
-
     values = df['iPTM'].values
-
-    # Violin plot for density
-    parts = ax.violinplot(values, positions=[0], showmeans=False,
-                          showmedians=False, showextrema=False)
-    for pc in parts['bodies']:
-        pc.set_facecolor(CAT_PALETTE[0])
-        pc.set_alpha(0.2)
-
-    # Box plot overlay
-    bp = ax.boxplot(values, positions=[0], widths=0.15, patch_artist=True,
-                    showfliers=False, zorder=2)
-    bp['boxes'][0].set_facecolor('white')
-    bp['boxes'][0].set_alpha(0.8)
-    bp['medians'][0].set_color('black')
-    bp['medians'][0].set_linewidth(1.5)
-
-    # Strip plot (jittered individual points)
-    jitter = np.random.default_rng(42).uniform(-0.12, 0.12, len(values))
-    colors = [get_color_for_value(v, QUALITY_THRESHOLDS['iptm_good'],
-                                   QUALITY_THRESHOLDS['iptm_acceptable'],
-                                   higher_is_better=True)
-              for v in values]
-    ax.scatter(jitter, values, c=colors, s=40, alpha=0.7, edgecolors='white',
-               linewidth=0.5, zorder=3)
-
-    # Threshold lines
-    ax.axhline(y=QUALITY_THRESHOLDS['iptm_good'], color=CAT_PALETTE[2],
-               linestyle='--', alpha=0.7, linewidth=1,
-               label=f"Good (>{QUALITY_THRESHOLDS['iptm_good']})")
-    ax.axhline(y=QUALITY_THRESHOLDS['iptm_acceptable'], color=CAT_PALETTE[1],
-               linestyle='--', alpha=0.7, linewidth=1,
-               label=f"Acceptable (>{QUALITY_THRESHOLDS['iptm_acceptable']})")
-
-    # Summary stats
-    median = np.median(values)
-    mean = np.mean(values)
-    ax.text(0.95, 0.97, f'n={len(values)}\nmedian={median:.2f}\nmean={mean:.2f}',
-            transform=ax.transAxes, fontsize=9, va='top', ha='right',
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
-
-    ax.set_title('iPTM Distribution', fontsize=14, fontweight='bold', pad=12)
-    ax.set_ylabel('iPTM (higher is better)', fontsize=11)
-    ax.set_xlim(-0.5, 0.5)
-    ax.set_xticks([])
-    ax.set_ylim(min(values) - 0.05, 1.05)
-    ax.yaxis.grid(True, linestyle='--', alpha=0.4)
-    ax.legend(loc='lower right', fontsize=9)
-
-    plt.tight_layout()
-
-    if output_path:
-        save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
-
-    return fig
+    return plot_violin_strip(
+        values, 'iPTM distribution', 'iPTM (higher is better)',
+        (QUALITY_THRESHOLDS['iptm_good'], QUALITY_THRESHOLDS['iptm_acceptable']),
+        higher_is_better=True, palette_idx=0, output_path=output_path,
+        legend_loc='lower right', ylim=(min(values) - 0.05, 1.05),
+        threshold_labels=('Excellent iPTM', 'PASS gate iPTM'))
 
 
 # ============================================================
@@ -814,39 +707,39 @@ def create_separate_figures(results_dir: str, output_prefix: str = None):
     # Figure 1: pLDDT comparison
     if 'pLDDT' in df.columns:
         fig1 = plot_plddt_comparison(df, f"{output_prefix}_plddt_scores")
-        saved_files.append(f"{output_prefix}_plddt_scores.png")
+        saved_files.append(f"{output_prefix}_plddt_scores.pdf")
         plt.close(fig1)
 
     # Figure 2: iPAE comparison (or loss if iPAE unavailable)
     if 'iPAE' in df.columns:
         fig2 = plot_ipae_comparison(df, f"{output_prefix}_ipae_comparison")
-        saved_files.append(f"{output_prefix}_ipae_comparison.png")
+        saved_files.append(f"{output_prefix}_ipae_comparison.pdf")
         plt.close(fig2)
     elif 'loss' in df.columns:
         fig2 = plot_loss_comparison(df, f"{output_prefix}_loss_comparison")
-        saved_files.append(f"{output_prefix}_loss_comparison.png")
+        saved_files.append(f"{output_prefix}_loss_comparison.pdf")
         plt.close(fig2)
 
     # Figure 3: Quality scatter (supports iPAE or loss fallback)
     if 'pLDDT' in df.columns and ('iPAE' in df.columns or 'loss' in df.columns):
         fig3 = plot_quality_scatter(df, f"{output_prefix}_quality_scatter")
-        saved_files.append(f"{output_prefix}_quality_scatter.png")
+        saved_files.append(f"{output_prefix}_quality_scatter.pdf")
         plt.close(fig3)
 
     # Figure 4: Design ranking
     fig4 = plot_design_ranking(df, f"{output_prefix}_design_ranking")
-    saved_files.append(f"{output_prefix}_design_ranking.png")
+    saved_files.append(f"{output_prefix}_design_ranking.pdf")
     plt.close(fig4)
 
     # Figure 5: Metrics table
     fig5 = plot_metrics_table(df, f"{output_prefix}_metrics_table")
-    saved_files.append(f"{output_prefix}_metrics_table.png")
+    saved_files.append(f"{output_prefix}_metrics_table.pdf")
     plt.close(fig5)
 
     # Figure 6: iPTM comparison
     if 'iPTM' in df.columns:
         fig6 = plot_iptm_comparison(df, f"{output_prefix}_iptm_scores")
-        saved_files.append(f"{output_prefix}_iptm_scores.png")
+        saved_files.append(f"{output_prefix}_iptm_scores.pdf")
         plt.close(fig6)
 
     print(f"\nGenerated {len(saved_files)} separate figures:")
@@ -863,47 +756,39 @@ def create_separate_figures(results_dir: str, output_prefix: str = None):
 def _plot_violin_strip_ax(ax, values, title, ylabel, thresholds, higher_is_better=True,
                           palette_idx=0):
     """Internal: Plot violin + strip distribution on given axis."""
-    # Violin
+    style_axis_vbar(ax)
+
     parts = ax.violinplot(values, positions=[0], showmeans=False,
                           showmedians=False, showextrema=False)
-    for pc in parts['bodies']:
-        pc.set_facecolor(CAT_PALETTE[palette_idx])
-        pc.set_alpha(0.2)
+    style_violin(parts, CAT_PALETTE[palette_idx])
 
-    # Box overlay
     bp = ax.boxplot(values, positions=[0], widths=0.15, patch_artist=True,
                     showfliers=False, zorder=2)
-    bp['boxes'][0].set_facecolor('white')
-    bp['boxes'][0].set_alpha(0.8)
-    bp['medians'][0].set_color('black')
-    bp['medians'][0].set_linewidth(1.5)
+    style_box(bp)
 
     # Strip (jittered points)
     jitter = np.random.default_rng(42).uniform(-0.12, 0.12, len(values))
     colors = [get_color_for_value(v, thresholds[0], thresholds[1],
                                    higher_is_better=higher_is_better)
               for v in values]
-    ax.scatter(jitter, values, c=colors, s=30, alpha=0.7, edgecolors='white',
-               linewidth=0.4, zorder=3)
+    ax.scatter(jitter, values, c=colors, s=DOT_SIZE, alpha=DOT_ALPHA,
+               linewidths=0, zorder=3)
 
-    # Threshold lines
-    good_label = f'>{thresholds[0]}' if higher_is_better else f'<{thresholds[0]}'
-    acc_label = f'>{thresholds[1]}' if higher_is_better else f'<{thresholds[1]}'
-    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.7, linewidth=1)
-    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='--', alpha=0.7, linewidth=1)
+    # Threshold lines: PASS gate solid, tighter excellent tier dashed.
+    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='-', alpha=0.9,
+               linewidth=GATE_LW)
+    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.7,
+               linewidth=CONTEXT_LW)
 
     # Stats
     median = np.median(values)
     mean = np.mean(values)
-    ax.text(0.95, 0.97, f'n={len(values)}\nmed={median:.2f}\nmean={mean:.2f}',
-            transform=ax.transAxes, fontsize=7, va='top', ha='right',
-            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
+    stat_box(ax, f'n={len(values)}\nmed={median:.2f}\nmean={mean:.2f}')
 
-    ax.set_title(title, fontsize=10, fontweight='bold', pad=8)
-    ax.set_ylabel(ylabel, fontsize=8)
+    ax.set_title(title, fontsize=TITLE_FONTSIZE, pad=4)
+    ax.set_ylabel(ylabel)
     ax.set_xlim(-0.5, 0.5)
     ax.set_xticks([])
-    ax.yaxis.grid(True, linestyle='--', alpha=0.4)
 
 
 def _plot_quality_scatter_ax(ax, df):
@@ -913,40 +798,47 @@ def _plot_quality_scatter_ax(ax, df):
     if 'iPAE' in df.columns:
         y_metric, y_label, y_thresh = 'iPAE', 'iPAE', QUALITY_THRESHOLDS['ipae_good']
     elif 'loss' in df.columns:
-        y_metric, y_label, y_thresh = 'loss', 'Loss', 2.0
+        y_metric, y_label, y_thresh = 'loss', 'Loss', LOSS_THRESHOLDS['good']
     else:
         ax.text(0.5, 0.5, 'Scatter data\nnot available', ha='center', va='center',
-                transform=ax.transAxes, fontsize=9)
+                transform=ax.transAxes, fontsize=BASE_FONTSIZE)
         ax.axis('off')
         return
 
+    style_axis_vbar(ax)
     scatter = ax.scatter(df['pLDDT'], df[y_metric], c=scores, cmap='viridis',
-                        s=40, alpha=0.8, edgecolors='white', linewidth=0.4)
+                        s=DOT_SIZE, alpha=DOT_ALPHA, linewidths=0)
 
-    y_min = df[y_metric].min() * 0.95
-    rect_good = Rectangle((QUALITY_THRESHOLDS['plddt_good'], y_min),
-                          1.0 - QUALITY_THRESHOLDS['plddt_good'],
-                          y_thresh - y_min,
-                          linewidth=0, facecolor=CAT_PALETTE[2], alpha=0.1)
+    x_lo, x_hi = SCATTER_XLIM
+    y_lo, y_hi = SCATTER_YLIM[y_metric]
+
+    rect_good = Rectangle((QUALITY_THRESHOLDS['plddt_good'], y_lo),
+                          x_hi - QUALITY_THRESHOLDS['plddt_good'],
+                          y_thresh - y_lo,
+                          linewidth=0, facecolor=CAT_PALETTE[2], alpha=0.10)
     ax.add_patch(rect_good)
 
     ax.axvline(x=QUALITY_THRESHOLDS['plddt_good'], color=CAT_PALETTE[2],
-               linestyle='--', alpha=0.5, linewidth=1)
+               linestyle='--', alpha=0.7, linewidth=CONTEXT_LW)
     ax.axhline(y=y_thresh, color=CAT_PALETTE[2],
-               linestyle='--', alpha=0.5, linewidth=1)
+               linestyle='--', alpha=0.7, linewidth=CONTEXT_LW)
 
-    ax.set_title('Quality Distribution', fontsize=10, fontweight='bold', pad=8)
-    ax.set_xlabel('pLDDT', fontsize=8)
-    ax.set_ylabel(y_label, fontsize=8)
+    ax.set_title('Quality distribution', fontsize=TITLE_FONTSIZE, pad=4)
+    ax.set_xlabel('pLDDT', fontsize=XLABEL_FONTSIZE)
+    ax.set_ylabel(y_label)
+    ax.set_xlim(x_lo, x_hi)
+    ax.set_ylim(y_lo, y_hi)
+    annotate_offscale(ax, df['pLDDT'], df[y_metric],
+                      SCATTER_XLIM, SCATTER_YLIM[y_metric])
 
-    cbar = plt.colorbar(scatter, ax=ax, shrink=0.8)
-    cbar.set_label('Score', fontsize=7)
+    cbar = plt.colorbar(scatter, ax=ax, shrink=0.85, aspect=22, pad=0.03)
+    style_colorbar(cbar, 'Score')
 
 
 def _plot_metrics_table_ax(ax, df):
     """Internal: Plot top-6 metrics table with three-line academic style."""
     ax.axis('off')
-    ax.set_title('Top Designs', fontsize=10, fontweight='bold', pad=8)
+    ax.set_title('Top designs', fontsize=TITLE_FONTSIZE, pad=4)
 
     df = df.copy()
     df['score'] = calculate_composite_score(df)
@@ -964,10 +856,11 @@ def _plot_metrics_table_ax(ax, df):
 
     table = ax.table(cellText=[['']*n_cols for _ in range(n_rows)],
                      loc='center', cellLoc='center', bbox=[0.0, 0.05, 1.0, 0.9])
+    table.auto_set_column_width(col=list(range(n_cols)))
 
     for j, label in enumerate(col_headers):
         cell = table[(0, j)]
-        cell.set_text_props(text=label, fontweight='bold', fontsize=8)
+        cell.set_text_props(text=label, fontsize=BASE_FONTSIZE)
         cell.set_facecolor('white')
 
     for i, (_, row) in enumerate(df_sorted.iterrows()):
@@ -978,7 +871,7 @@ def _plot_metrics_table_ax(ax, df):
                 text = simplify_design_id(val)
             else:
                 text = f'{val:.2f}'
-            cell.set_text_props(text=text, fontsize=7)
+            cell.set_text_props(text=text, fontsize=TABLE_FONTSIZE)
 
     table.auto_set_font_size(False)
     for (row_idx, col_idx), cell in table.get_celld().items():
@@ -986,7 +879,7 @@ def _plot_metrics_table_ax(ax, df):
         cell.set_linewidth(0)
         cell.set_height(0.11)
         if row_idx > 0 and row_idx % 2 == 0:
-            cell.set_facecolor('#F5F5F5')
+            cell.set_facecolor('#F7F7F7')
         elif row_idx > 0:
             cell.set_facecolor('white')
 
@@ -997,7 +890,8 @@ def _plot_metrics_table_ax(ax, df):
     row_h = bbox[3] / n_rows
     y_header_bottom = y_top - row_h
 
-    line_kw = dict(color='black', linewidth=1.0, transform=ax.transAxes, clip_on=False)
+    line_kw = dict(color='#333333', linewidth=RULE_LW, transform=ax.transAxes,
+                   clip_on=False)
     ax.plot([x_left, x_right], [y_top, y_top], **line_kw)
     ax.plot([x_left, x_right], [y_header_bottom, y_header_bottom], **line_kw)
     ax.plot([x_left, x_right], [y_bottom, y_bottom], **line_kw)
@@ -1029,7 +923,7 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
         print("Error: No design metrics found in", results_dir)
         return None
 
-    fig = plt.figure(figsize=(14, 9))
+    fig = plt.figure(figsize=MERGED_2x3_SIZE)
 
     ax1 = fig.add_subplot(2, 3, 1)
     prettify_ax(ax1)
@@ -1045,7 +939,7 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
 
     # Panel 1: pLDDT distribution
     if 'pLDDT' in df.columns:
-        _plot_violin_strip_ax(ax1, df['pLDDT'].values, 'pLDDT Distribution',
+        _plot_violin_strip_ax(ax1, df['pLDDT'].values, 'pLDDT distribution',
                               'pLDDT (higher is better)',
                               [QUALITY_THRESHOLDS['plddt_good'],
                                QUALITY_THRESHOLDS['plddt_acceptable']],
@@ -1053,23 +947,23 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
         ax1.set_ylim(df['pLDDT'].min() - 0.05, 1.05)
     else:
         ax1.text(0.5, 0.5, 'pLDDT data\nnot available', ha='center', va='center',
-                transform=ax1.transAxes, fontsize=10)
+                transform=ax1.transAxes, fontsize=BASE_FONTSIZE)
         ax1.axis('off')
 
     # Panel 2: Loss or iPAE distribution
     if 'iPAE' in df.columns:
-        _plot_violin_strip_ax(ax2, df['iPAE'].values, 'iPAE Distribution',
+        _plot_violin_strip_ax(ax2, df['iPAE'].values, 'iPAE distribution',
                               'iPAE (lower is better)',
                               [QUALITY_THRESHOLDS['ipae_good'],
                                QUALITY_THRESHOLDS['ipae_acceptable']],
                               higher_is_better=False)
     elif 'loss' in df.columns:
-        _plot_violin_strip_ax(ax2, df['loss'].values, 'Loss Distribution',
+        _plot_violin_strip_ax(ax2, df['loss'].values, 'Loss distribution',
                               'Loss (lower is better)',
                               [2.0, 3.0], higher_is_better=False)
     else:
         ax2.text(0.5, 0.5, 'Loss/iPAE data\nnot available', ha='center', va='center',
-                transform=ax2.transAxes, fontsize=10)
+                transform=ax2.transAxes, fontsize=BASE_FONTSIZE)
         ax2.axis('off')
 
     # Panel 3: Quality scatter
@@ -1077,12 +971,12 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
         _plot_quality_scatter_ax(ax3, df)
     else:
         ax3.text(0.5, 0.5, 'Scatter data\nnot available', ha='center', va='center',
-                transform=ax3.transAxes, fontsize=10)
+                transform=ax3.transAxes, fontsize=BASE_FONTSIZE)
         ax3.axis('off')
 
     # Panel 4: Composite score distribution
     scores = calculate_composite_score(df)
-    _plot_violin_strip_ax(ax4, scores.values, 'Composite Score',
+    _plot_violin_strip_ax(ax4, scores.values, 'Composite score',
                           'Score', [0.7, 0.5], higher_is_better=True,
                           palette_idx=4)
 
@@ -1091,7 +985,7 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
 
     # Panel 6: iPTM distribution
     if 'iPTM' in df.columns:
-        _plot_violin_strip_ax(ax6, df['iPTM'].values, 'iPTM Distribution',
+        _plot_violin_strip_ax(ax6, df['iPTM'].values, 'iPTM distribution',
                               'iPTM (higher is better)',
                               [QUALITY_THRESHOLDS['iptm_good'],
                                QUALITY_THRESHOLDS['iptm_acceptable']],
@@ -1099,16 +993,16 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
         ax6.set_ylim(df['iPTM'].min() - 0.05, 1.05)
     else:
         ax6.text(0.5, 0.5, 'iPTM data\nnot available', ha='center', va='center',
-                transform=ax6.transAxes, fontsize=10)
+                transform=ax6.transAxes, fontsize=BASE_FONTSIZE)
         ax6.axis('off')
 
     plt.tight_layout()
 
-    save_for_pub(fig, output_prefix, include_raster=True)
+    save_for_pub(fig, output_prefix)
     plt.close(fig)
 
-    print(f"\nSaved merged figure: {output_prefix}.png, {output_prefix}.pdf")
-    return f"{output_prefix}.png"
+    print(f"\nSaved merged figure: {output_prefix}.pdf")
+    return f"{output_prefix}.pdf"
 
 
 # ============================================================
@@ -1116,12 +1010,16 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
 # ============================================================
 
 def display_results(results_dir: str, show_all: bool = True, block: bool = True):
-    """Display AfCycDesign pipeline results in an interactive environment.
+    """Report the AfCycDesign figures on disk and print a ranking summary.
+
+    The figures are vector PDFs (no rasters are written), so this lists the
+    files rather than compositing bitmaps. In a notebook the merged summary
+    sheet is embedded inline when present.
 
     Args:
         results_dir: Path to results directory containing the generated figures
-        show_all: If True, display all figures. If False, only display main metrics.
-        block: If True (default), block until figure window is closed.
+        show_all: If True, list all figures. If False, only the main metrics.
+        block: Unused; kept for call-site compatibility.
 
     Returns:
         dict: Dictionary with figure paths for further reference
@@ -1140,58 +1038,35 @@ def display_results(results_dir: str, show_all: bool = True, block: bool = True)
 
     figures = {}
     figure_files = [
-        ("plddt_scores", "pLDDT Scores"),
+        ("plddt_scores", "pLDDT scores"),
         ("ipae_comparison", "Interface iPAE"),
-        ("quality_scatter", "Quality Distribution"),
-        ("design_ranking", "Design Ranking"),
-        ("metrics_table", "Design Metrics Summary"),
-        ("iptm_scores", "iPTM Scores"),
+        ("loss_comparison", "Loss distribution"),
+        ("quality_scatter", "Quality distribution"),
+        ("design_ranking", "Design ranking"),
+        ("metrics_table", "Design metrics summary"),
+        ("iptm_scores", "iPTM scores"),
     ]
 
     if not show_all:
         figure_files = figure_files[:3]
 
-    if in_notebook:
-        from IPython.display import display, Image as IPImage
-        for fig_name, title in figure_files:
-            png_path = results_dir / f"afcycdesign_{fig_name}.png"
-            if png_path.exists():
-                print(f"\n{title}:")
-                display(IPImage(filename=str(png_path)))
-                figures[fig_name] = str(png_path)
-            else:
-                print(f"Warning: {png_path} not found")
-    else:
-        try:
-            matplotlib.use('TkAgg')
-        except Exception:
-            try:
-                matplotlib.use('Qt5Agg')
-            except Exception:
-                pass
+    print("\nFigures (PDF):")
+    for fig_name, title in figure_files:
+        pdf_path = results_dir / f"afcycdesign_{fig_name}.pdf"
+        if pdf_path.exists():
+            print(f"  {title}: {pdf_path}")
+            figures[fig_name] = str(pdf_path)
 
-        from PIL import Image
+    summary_pdf = results_dir / "afcycdesign_summary.pdf"
+    if summary_pdf.exists():
+        figures['summary'] = str(summary_pdf)
+        print(f"  Merged summary: {summary_pdf}")
+        if in_notebook:
+            from IPython.display import IFrame, display
+            display(IFrame(str(summary_pdf), width='100%', height=600))
 
-        plt.ion()
-
-        fig, axes = plt.subplots(2, 3, figsize=(14, 9))
-        axes = axes.flatten()
-
-        for i, (fig_name, title) in enumerate(figure_files):
-            png_path = results_dir / f"afcycdesign_{fig_name}.png"
-            if png_path.exists():
-                img = Image.open(png_path)
-                axes[i].imshow(img)
-                axes[i].axis('off')
-                figures[fig_name] = str(png_path)
-            else:
-                axes[i].text(0.5, 0.5, f"{fig_name}\nnot found",
-                            ha='center', va='center', transform=axes[i].transAxes)
-                axes[i].axis('off')
-
-        plt.tight_layout()
-        figures['combined_figure'] = fig
-        plt.show(block=block)
+    if not figures:
+        print(f"  none found in {results_dir} — run create_separate_figures() first")
 
     # Print summary
     df = load_design_metrics(results_dir)

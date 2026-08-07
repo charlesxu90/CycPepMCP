@@ -13,7 +13,10 @@ Generates separate figures after binder design workflow:
 8. Metrics Table - Top designs with three-line academic style
 9. Execution Timeline - Gantt chart of 5 pipeline stages
 
-Each figure is saved as a separate PNG + PDF file.
+Every figure is saved as a print-sized PDF only (no PNG/SVG), styled through
+`workflow-skills/scripts/plot_style_utils.py`: Arial at 6-7 pt, 0.3 pt axes,
+2 pt data markers, mm-accurate Nature column widths, and `pdf.fonttype=42` so
+all text stays editable in Illustrator.
 A merged summary figure can also be generated.
 """
 
@@ -21,6 +24,7 @@ import argparse
 import json
 import os
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -32,14 +36,32 @@ from matplotlib.patches import Rectangle
 from matplotlib.table import Table
 import numpy as np
 import pandas as pd
-import seaborn as sns
 
-# Color palettes
-CAT_PALETTE = sns.color_palette('colorblind')
-GRAY = [0.5, 0.5, 0.5]
+# Shared Nature-style figure vocabulary (fonts, line widths, dot size, sizes).
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+from plot_style_utils import (  # noqa: E402
+    BAR_EDGE_LW, BASE_FONTSIZE, CAT_PALETTE, CONTEXT_LW,
+    DEFAULT_FIGURE_RCPARAMS, DOT_ALPHA, DOT_SIZE, GATE_LW, GRAY,
+    MERGED_3x3_SIZE, PANEL_SIZE, RULE_LW, SCATTER_SIZE, TABLE_FONTSIZE,
+    TABLE_SIZE, TIMELINE_SIZE, TITLE_FONTSIZE, XLABEL_FONTSIZE,
+    annotate_offscale, apply_nature_rcparams, mm_size, prettify_ax, save_pdf,
+    simple_ax, stat_box, style_axis_hbar, style_axis_vbar, style_box,
+    style_colorbar, style_violin, thin_legend, tier_color,
+)
 
-# Figure size for individual plots
-FIGSIZE = (5, 5)
+# Figure size for individual distribution plots (45 x 40 mm print size).
+FIGSIZE = PANEL_SIZE
+
+# Print size for the top-designs table, narrower than the shared TABLE_MM
+# (89 x 34) so the panel drops into a 65 mm figure slot. Saved with
+# bbox_inches=None so the PDF page is exactly this size.
+METRICS_TABLE_MM = (65.0, 38.0)
+METRICS_TABLE_SIZE = mm_size(*METRICS_TABLE_MM)
+# Clearance above the top rule and below the bottom rule. Flush against the page
+# edge the strokes read as clipped, so they get this much white to sit against.
+METRICS_TABLE_RULE_INSET_MM = 0.6
 
 # Centralized PASS-gate thresholds (single source of truth: benchmark/configs/workflows.yaml).
 # Per-target iPAE/ddG come from rfpeptides.per_target_thresholds; uniform metrics
@@ -60,26 +82,20 @@ _RF_PER_TARGET = cfg.RFPEPTIDES_PASS_GATE.extras['per_target_thresholds']
 
 def _build_paper_thresholds(per_target: dict, primary: dict) -> dict:
     """Materialize the per-target PAPER_THRESHOLDS structure expected by the
-    rest of the viz from the centralized config. Labels are reconstructed."""
-    descriptions = {
-        'mcl1':    'MCL1, concave pocket',
-        'mdm2':    'MDM2, concave pocket',
-        'gabarap': 'GABARAP, shallow groove',
-        'rbta':    'RbtA, flat beta-helix',
-        'pdl1':    'PD-L1, flat IGV interface',
-        'general': 'concave default',
-    }
+    rest of the viz from the centralized config.
+
+    Labels carry the metric name only — the plot helpers append the numeric
+    cutoff, and the target is named in the caption/stdout — so legends stay
+    short enough not to widen a 45 mm panel.
+    """
     out = {}
     for tgt, vals in per_target.items():
-        ipae = vals['ipae']
-        ddg = vals['ddg']
-        ddg_label_extra = ' (MDM2-specific)' if tgt == 'mdm2' and ddg <= -50 else ''
         out[tgt] = {
-            'ipae':  (ipae, f"Paper iPAE<{ipae:.2f} ({descriptions.get(tgt, tgt)})"),
-            'ddg':   (ddg,  f"Paper ddG<{ddg} REU{ddg_label_extra}"),
-            'sap':   (primary['sap_max'], f"Paper SAP<{primary['sap_max']}"),
-            'cms':   (primary['cms_min'], f"Paper CMS>{primary['cms_min']} A^2"),
-            'plddt': (primary['plddt_min'], f"Paper pLDDT>{primary['plddt_min']:.2f}"),
+            'ipae':  (vals['ipae'], 'Paper iPAE'),
+            'ddg':   (vals['ddg'], 'Paper ddG'),
+            'sap':   (primary['sap_max'], 'Paper SAP'),
+            'cms':   (primary['cms_min'], 'Paper CMS'),
+            'plddt': (primary['plddt_min'], 'Paper pLDDT'),
         }
     return out
 
@@ -101,6 +117,13 @@ QUALITY_THRESHOLDS = {
     'cms_good':        _RF_EXCELLENT['cms_min'],
     'cms_acceptable':  _RF_PRIMARY['cms_min'],
 }
+
+# Fixed axis ranges for the ddG-vs-iPAE scatter. Auto-scaling made the same
+# design land at a different position in every batch, so the panel is pinned
+# instead and stays visually comparable across runs. annotate_offscale() flags
+# any design the window excludes.
+SCATTER_DDG_XLIM = (-80.0, -10.0)
+SCATTER_IPAE_YLIM = (0.0, 0.6)
 
 # Active threshold labels, populated by configure_thresholds().
 THRESHOLD_LABELS = {
@@ -149,52 +172,24 @@ PIPELINE_STAGES = [
 ]
 
 
-def prettify_ax(ax):
-    """Make axes more pleasant to look at."""
-    for i, spine in enumerate(ax.spines.values()):
-        if i == 3 or i == 1:
-            spine.set_visible(False)
-    ax.set_frameon = True
-    ax.tick_params(direction='out', length=3, color='k')
-    ax.set_axisbelow(True)
+def set_pub_plot_context(context=None):
+    """Apply the Nature print rcParams (Arial, 7 pt titles, 6 pt body)."""
+    apply_nature_rcparams(DEFAULT_FIGURE_RCPARAMS)
 
 
-def simple_ax(figsize=FIGSIZE, **kwargs):
-    """Shortcut to make and 'prettify' a simple figure with 1 axis."""
-    fig = plt.figure(figsize=figsize)
-    ax = fig.add_subplot(111, **kwargs)
-    prettify_ax(ax)
-    return fig, ax
+def save_for_pub(fig, path, bbox_inches='tight'):
+    """Save figure as a single editable-text PDF.
 
-
-def set_pub_plot_context(context="talk"):
-    """Set publication-quality plot context."""
-    sns.set(style="white", context=context)
-
-
-def save_for_pub(fig, path, dpi=300, include_raster=True):
-    """Save figure in publication-ready formats."""
-    fig.savefig(path + ".pdf", dpi=dpi, bbox_inches='tight', transparent=True)
-    if include_raster:
-        fig.savefig(path + ".png", dpi=dpi, bbox_inches='tight', transparent=True)
+    Pass ``bbox_inches=None`` for figures whose page must stay at the exact
+    authored mm size rather than being cropped to the drawn content.
+    """
+    return save_pdf(fig, path, bbox_inches=bbox_inches)
 
 
 def get_color_for_value(value, threshold_good, threshold_acceptable, higher_is_better=True):
-    """Get color based on quality thresholds."""
-    if higher_is_better:
-        if value >= threshold_good:
-            return CAT_PALETTE[2]
-        elif value >= threshold_acceptable:
-            return CAT_PALETTE[1]
-        else:
-            return CAT_PALETTE[3]
-    else:
-        if value <= threshold_good:
-            return CAT_PALETTE[2]
-        elif value <= threshold_acceptable:
-            return CAT_PALETTE[1]
-        else:
-            return CAT_PALETTE[3]
+    """Quality-tier colour for a metric value (see plot_style_utils.tier_color)."""
+    return tier_color(value, threshold_good, threshold_acceptable,
+                      higher_is_better=higher_is_better)
 
 
 def simplify_design_id(name: str) -> str:
@@ -215,6 +210,13 @@ def simplify_design_id(name: str) -> str:
         name = name.replace(token, '')
     return name
 
+
+
+def compact_design_id(name: str) -> str:
+    """Trailing design index for narrow table panels (RbtA_monomer_relaxed_39 -> 39)."""
+    simple = simplify_design_id(name)
+    tail = simple.rsplit('_', 1)[-1]
+    return tail if tail.isdigit() else simple
 
 # ============================================================
 # Data Loading
@@ -330,50 +332,42 @@ def plot_violin_strip(values, title, ylabel, thresholds, higher_is_better=True,
     for each line — second label is shown bold (the paper-aligned cutoff).
     """
     fig, ax = simple_ax(figsize=FIGSIZE)
+    style_axis_vbar(ax)
 
     parts = ax.violinplot(values, positions=[0], showmeans=False,
                           showmedians=False, showextrema=False)
-    for pc in parts['bodies']:
-        pc.set_facecolor(CAT_PALETTE[palette_idx])
-        pc.set_alpha(0.2)
+    style_violin(parts, CAT_PALETTE[palette_idx])
 
     bp = ax.boxplot(values, positions=[0], widths=0.15, patch_artist=True,
                     showfliers=False, zorder=2)
-    bp['boxes'][0].set_facecolor('white')
-    bp['boxes'][0].set_alpha(0.8)
-    bp['medians'][0].set_color('black')
-    bp['medians'][0].set_linewidth(1.5)
+    style_box(bp)
 
     jitter = np.random.default_rng(42).uniform(-0.12, 0.12, len(values))
     colors = [get_color_for_value(v, thresholds[0], thresholds[1],
                                    higher_is_better=higher_is_better)
               for v in values]
-    ax.scatter(jitter, values, c=colors, s=40, alpha=0.7, edgecolors='white',
-               linewidth=0.5, zorder=3)
+    ax.scatter(jitter, values, c=colors, s=DOT_SIZE, alpha=DOT_ALPHA,
+               linewidths=0, zorder=3)
 
     # Paper-aligned cutoff (solid, prominent); excellent context line (dashed, faint).
-    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='-', alpha=0.85,
-               linewidth=1.4, label=f"{threshold_labels[1]} ({thresholds[1]:g})")
-    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.55,
-               linewidth=1.0, label=f"{threshold_labels[0]} ({thresholds[0]:g})")
-    ax.legend(loc='lower left', fontsize=7, frameon=True, framealpha=0.9)
+    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='-', alpha=0.9,
+               linewidth=GATE_LW, label=f"{threshold_labels[1]} ({thresholds[1]:g})")
+    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.7,
+               linewidth=CONTEXT_LW, label=f"{threshold_labels[0]} ({thresholds[0]:g})")
+    thin_legend(ax, loc='best')
 
     median = np.median(values)
     mean = np.mean(values)
-    ax.text(0.95, 0.97, f'n={len(values)}\nmedian={median:.2f}\nmean={mean:.2f}',
-            transform=ax.transAxes, fontsize=9, va='top', ha='right',
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
+    stat_box(ax, f'n={len(values)}\nmedian={median:.2f}\nmean={mean:.2f}')
 
-    ax.set_title(title, fontsize=14, fontweight='bold', pad=12)
-    ax.set_ylabel(ylabel, fontsize=11)
+    ax.set_title(title, fontsize=TITLE_FONTSIZE, pad=4)
+    ax.set_ylabel(ylabel)
     ax.set_xlim(-0.5, 0.5)
     ax.set_xticks([])
-    ax.yaxis.grid(True, linestyle='--', alpha=0.4)
 
     plt.tight_layout()
     if output_path:
         save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
     return fig
 
 
@@ -381,43 +375,37 @@ def _plot_violin_strip_ax(ax, values, title, ylabel, thresholds, higher_is_bette
                            palette_idx=0,
                            threshold_labels=('Excellent', 'Paper threshold')):
     """Internal: Plot violin + strip distribution on a given axis (for merged figure)."""
+    style_axis_vbar(ax)
+
     parts = ax.violinplot(values, positions=[0], showmeans=False,
                           showmedians=False, showextrema=False)
-    for pc in parts['bodies']:
-        pc.set_facecolor(CAT_PALETTE[palette_idx])
-        pc.set_alpha(0.2)
+    style_violin(parts, CAT_PALETTE[palette_idx])
 
     bp = ax.boxplot(values, positions=[0], widths=0.15, patch_artist=True,
                     showfliers=False, zorder=2)
-    bp['boxes'][0].set_facecolor('white')
-    bp['boxes'][0].set_alpha(0.8)
-    bp['medians'][0].set_color('black')
-    bp['medians'][0].set_linewidth(1.5)
+    style_box(bp)
 
     jitter = np.random.default_rng(42).uniform(-0.12, 0.12, len(values))
     colors = [get_color_for_value(v, thresholds[0], thresholds[1],
                                    higher_is_better=higher_is_better)
               for v in values]
-    ax.scatter(jitter, values, c=colors, s=30, alpha=0.7, edgecolors='white',
-               linewidth=0.4, zorder=3)
+    ax.scatter(jitter, values, c=colors, s=DOT_SIZE, alpha=DOT_ALPHA,
+               linewidths=0, zorder=3)
 
-    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='-', alpha=0.85,
-               linewidth=1.2, label=f"{threshold_labels[1]} ({thresholds[1]:g})")
-    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.55,
-               linewidth=0.9, label=f"{threshold_labels[0]} ({thresholds[0]:g})")
-    ax.legend(loc='lower left', fontsize=6, frameon=True, framealpha=0.9)
+    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='-', alpha=0.9,
+               linewidth=GATE_LW, label=f"{threshold_labels[1]} ({thresholds[1]:g})")
+    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.7,
+               linewidth=CONTEXT_LW, label=f"{threshold_labels[0]} ({thresholds[0]:g})")
+    thin_legend(ax, loc='best')
 
     median = np.median(values)
     mean = np.mean(values)
-    ax.text(0.95, 0.97, f'n={len(values)}\nmed={median:.2f}\nmean={mean:.2f}',
-            transform=ax.transAxes, fontsize=7, va='top', ha='right',
-            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
+    stat_box(ax, f'n={len(values)}\nmed={median:.2f}\nmean={mean:.2f}')
 
-    ax.set_title(title, fontsize=10, fontweight='bold', pad=8)
-    ax.set_ylabel(ylabel, fontsize=8)
+    ax.set_title(title, fontsize=TITLE_FONTSIZE, pad=4)
+    ax.set_ylabel(ylabel)
     ax.set_xlim(-0.5, 0.5)
     ax.set_xticks([])
-    ax.yaxis.grid(True, linestyle='--', alpha=0.4)
 
 
 # ============================================================
@@ -427,7 +415,7 @@ def _plot_violin_strip_ax(ax, values, title, ylabel, thresholds, higher_is_bette
 def plot_ddg_distribution(df, output_path=None):
     """Plot 1: ddG distribution."""
     return plot_violin_strip(
-        df['ddg'].values, 'Binding Energy (ddG)',
+        df['ddg'].values, 'Binding energy (ddG)',
         'ddG (REU, more negative = better)',
         (QUALITY_THRESHOLDS['ddg_good'], QUALITY_THRESHOLDS['ddg_acceptable']),
         higher_is_better=False, palette_idx=0, output_path=output_path,
@@ -457,7 +445,7 @@ def plot_plddt_distribution(df, output_path=None):
     if len(values) == 0:
         return None
     fig = plot_violin_strip(
-        values, 'pLDDT Distribution',
+        values, 'pLDDT distribution',
         'pLDDT (higher is better)',
         (QUALITY_THRESHOLDS['plddt_good'], QUALITY_THRESHOLDS['plddt_acceptable']),
         higher_is_better=True, palette_idx=2, output_path=output_path,
@@ -476,7 +464,7 @@ def plot_sap_distribution(df, output_path=None):
     if len(values) == 0:
         return None
     return plot_violin_strip(
-        values, 'Aggregation Propensity (SAP)',
+        values, 'Aggregation propensity (SAP)',
         'SAP (lower is better)',
         (QUALITY_THRESHOLDS['sap_good'], QUALITY_THRESHOLDS['sap_acceptable']),
         higher_is_better=False, palette_idx=3, output_path=output_path,
@@ -491,7 +479,7 @@ def plot_cms_distribution(df, output_path=None):
     if len(values) == 0:
         return None
     return plot_violin_strip(
-        values, 'Contact Molecular Surface (CMS)',
+        values, 'Contact molecular surface (CMS)',
         'CMS (\u00c5\u00b2, higher is better)',
         (QUALITY_THRESHOLDS['cms_good'], QUALITY_THRESHOLDS['cms_acceptable']),
         higher_is_better=True, palette_idx=4, output_path=output_path,
@@ -502,38 +490,43 @@ def plot_quality_scatter(df, output_path=None):
     """Plot 6: Scatter plot of ddG vs iPAE colored by composite score."""
     if 'iPAE' not in df.columns:
         return None
-    fig, ax = simple_ax(figsize=(6, 5))
+    fig, ax = simple_ax(figsize=SCATTER_SIZE)
+    style_axis_vbar(ax)
     scores = calculate_composite_score(df)
 
     scatter = ax.scatter(df['ddg'], df['iPAE'], c=scores, cmap='viridis',
-                        s=80, alpha=0.8, edgecolors='white', linewidth=0.5)
+                        s=DOT_SIZE, alpha=DOT_ALPHA, linewidths=0)
 
     # Shaded region = passes BOTH paper-aligned cutoffs (ddG and iPAE).
-    ddg_min = min(df['ddg'].min() * 1.1, -80)
+    ddg_min, ddg_max = SCATTER_DDG_XLIM
+    ipae_min, ipae_max = SCATTER_IPAE_YLIM
     ddg_cut = QUALITY_THRESHOLDS['ddg_acceptable']
     ipae_cut = QUALITY_THRESHOLDS['ipae_acceptable']
-    rect_good = Rectangle((ddg_min, 0),
-                          ddg_cut - ddg_min, ipae_cut,
-                          linewidth=0, facecolor=CAT_PALETTE[2], alpha=0.12)
+    rect_good = Rectangle((ddg_min, ipae_min),
+                          ddg_cut - ddg_min, ipae_cut - ipae_min,
+                          linewidth=0, facecolor=CAT_PALETTE[2], alpha=0.10)
     ax.add_patch(rect_good)
 
-    ax.axvline(x=ddg_cut, color=CAT_PALETTE[2], linestyle='-', alpha=0.85,
-               linewidth=1.4, label=f"{THRESHOLD_LABELS['ddg']} ({ddg_cut:g})")
-    ax.axhline(y=ipae_cut, color=CAT_PALETTE[1], linestyle='-', alpha=0.85,
-               linewidth=1.4, label=f"{THRESHOLD_LABELS['ipae']} ({ipae_cut:g})")
-    ax.legend(loc='upper right', fontsize=7, frameon=True, framealpha=0.9)
+    ax.axvline(x=ddg_cut, color=CAT_PALETTE[2], linestyle='-', alpha=0.9,
+               linewidth=GATE_LW, label=f"{THRESHOLD_LABELS['ddg']} ({ddg_cut:g})")
+    ax.axhline(y=ipae_cut, color=CAT_PALETTE[1], linestyle='-', alpha=0.9,
+               linewidth=GATE_LW, label=f"{THRESHOLD_LABELS['ipae']} ({ipae_cut:g})")
+    thin_legend(ax, loc='upper right')
 
-    ax.set_title('ddG vs iPAE', fontsize=14, fontweight='bold', pad=12)
-    ax.set_xlabel('ddG (REU, more negative = better)', fontsize=11)
-    ax.set_ylabel('iPAE (lower is better)', fontsize=11)
+    ax.set_title('ddG vs iPAE', fontsize=TITLE_FONTSIZE, pad=4)
+    ax.set_xlabel('ddG (REU, more negative = better)', fontsize=XLABEL_FONTSIZE)
+    ax.set_ylabel('iPAE (lower is better)')
+    ax.set_xlim(ddg_min, ddg_max)
+    ax.set_ylim(ipae_min, ipae_max)
+    annotate_offscale(ax, df['ddg'], df['iPAE'],
+                       SCATTER_DDG_XLIM, SCATTER_IPAE_YLIM)
 
-    cbar = plt.colorbar(scatter, ax=ax, shrink=0.8)
-    cbar.set_label('Composite Score', fontsize=10)
+    cbar = plt.colorbar(scatter, ax=ax, shrink=0.85, aspect=22, pad=0.03)
+    style_colorbar(cbar, 'Composite score')
 
     plt.tight_layout()
     if output_path:
         save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
     return fig
 
 
@@ -541,7 +534,7 @@ def plot_composite_distribution(df, output_path=None):
     """Plot 7: Composite score distribution."""
     scores = calculate_composite_score(df).values
     fig = plot_violin_strip(
-        scores, 'Composite Score Distribution',
+        scores, 'Composite score distribution',
         'Score', (0.7, 0.5),
         higher_is_better=True, palette_idx=4, output_path=output_path)
     ax = fig.axes[0]
@@ -551,8 +544,8 @@ def plot_composite_distribution(df, output_path=None):
             coll.remove()
             break
     jitter = np.random.default_rng(42).uniform(-0.12, 0.12, len(scores))
-    ax.scatter(jitter, scores, c=scores, cmap='viridis', s=40, alpha=0.7,
-               edgecolors='white', linewidth=0.5, zorder=3)
+    ax.scatter(jitter, scores, c=scores, cmap='viridis', s=DOT_SIZE,
+               alpha=DOT_ALPHA, linewidths=0, zorder=3)
     if output_path:
         save_for_pub(fig, output_path)
     return fig
@@ -560,10 +553,11 @@ def plot_composite_distribution(df, output_path=None):
 
 def plot_metrics_table(df, output_path=None, top_n=6):
     """Plot 8: Top designs table with three-line academic style."""
-    fig = plt.figure(figsize=(6, 4))
-    ax = fig.add_subplot(111)
+    fig = plt.figure(figsize=METRICS_TABLE_SIZE)
+    # Axes covers the whole page: the table *is* the figure, so there are no
+    # outer margins to trim later.
+    ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
     ax.axis('off')
-    ax.set_title('Top Designs', fontsize=14, fontweight='bold', pad=12)
 
     df = df.copy()
     df['score'] = calculate_composite_score(df)
@@ -579,12 +573,20 @@ def plot_metrics_table(df, output_path=None, top_n=6):
     n_rows = len(df_sorted) + 1
     n_cols = len(col_defs)
 
+    # One bbox for both the table and its three rules, so they cannot drift.
+    # Full width, inset vertically so the top and bottom rules read as edges
+    # rather than as strokes clipped by the page boundary.
+    rule_pad = METRICS_TABLE_RULE_INSET_MM / METRICS_TABLE_MM[1]
+    bbox = [0.0, rule_pad, 1.0, 1.0 - 2 * rule_pad]
     table = ax.table(cellText=[['']*n_cols for _ in range(n_rows)],
-                     loc='center', cellLoc='center', bbox=[0.02, 0.05, 0.96, 0.85])
+                     loc='center', cellLoc='center', bbox=bbox)
+    # Size columns to their content: design IDs (2PQK_MCL1_75) are far wider
+    # than a numeric cell and get clipped under equal-width columns.
+    table.auto_set_column_width(col=list(range(n_cols)))
 
     for j, (col, header) in enumerate(col_defs):
         cell = table[(0, j)]
-        cell.set_text_props(text=header, fontweight='bold', fontsize=9)
+        cell.set_text_props(text=header, fontsize=BASE_FONTSIZE)
         cell.set_facecolor('white')
 
     for i, (_, row) in enumerate(df_sorted.iterrows()):
@@ -607,7 +609,7 @@ def plot_metrics_table(df, output_path=None, top_n=6):
                 text = f'{val:.0f}'
             else:
                 text = f'{val:.2f}'
-            cell.set_text_props(text=text, fontsize=8)
+            cell.set_text_props(text=text, fontsize=TABLE_FONTSIZE)
 
     # Three-line style with alternating row shading
     table.auto_set_font_size(False)
@@ -616,25 +618,27 @@ def plot_metrics_table(df, output_path=None, top_n=6):
         cell.set_linewidth(0)
         cell.set_height(0.11)
         if row_idx > 0 and row_idx % 2 == 0:
-            cell.set_facecolor('#F5F5F5')
+            cell.set_facecolor('#F7F7F7')
         elif row_idx > 0:
             cell.set_facecolor('white')
 
-    bbox = [0.02, 0.05, 0.96, 0.85]
+    # Three-line rules: above the header, under the header, under the last row.
     x_left, x_right = bbox[0], bbox[0] + bbox[2]
     y_bottom, y_top = bbox[1], bbox[1] + bbox[3]
     row_h = bbox[3] / n_rows
     y_header_bottom = y_top - row_h
 
-    line_kwargs = dict(color='black', linewidth=1.2, transform=ax.transAxes, clip_on=False)
+    line_kwargs = dict(color='#333333', linewidth=RULE_LW,
+                       transform=ax.transAxes, clip_on=False)
     ax.plot([x_left, x_right], [y_top, y_top], **line_kwargs)
     ax.plot([x_left, x_right], [y_header_bottom, y_header_bottom], **line_kwargs)
     ax.plot([x_left, x_right], [y_bottom, y_bottom], **line_kwargs)
 
-    plt.tight_layout()
+    # No tight_layout: it would re-inset the full-bleed axes and bring the
+    # margins back.
     if output_path:
-        save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
+        # bbox_inches=None: keep the page at METRICS_TABLE_MM exactly.
+        save_for_pub(fig, output_path, bbox_inches=None)
     return fig
 
 
@@ -643,47 +647,73 @@ def plot_metrics_table(df, output_path=None, top_n=6):
 # ============================================================
 
 def parse_pipeline_log(log_path: Path) -> list:
-    """Parse pipeline.log to extract stage start times and durations."""
+    """Parse pipeline.log to extract stage start times and durations.
+
+    Handles both log prefixes the pipeline has emitted: the bare `[HH:MM:SS]`
+    form and the current `YYYY-MM-DD HH:MM:SS [LEVEL]` form. Stage headers are
+    matched anywhere in the message body (`... [INFO] STAGE 3: ...`).
+    """
     if not log_path.exists():
         return None
-    stage_times = {}
-    time_pattern = re.compile(r'^\[(\d{2}:\d{2}:\d{2})\]\s+(.*)$')
+    # group 1 = clock-only prefix, group 2 = full timestamp prefix, group 3 = body
+    time_pattern = re.compile(
+        r'^(?:\[(\d{2}:\d{2}:\d{2})\]|(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}))\s+(.*)$')
     with open(log_path) as f:
         lines = f.readlines()
+
+    # Stage headers in the order they appear. A resumed run re-emits a header
+    # (e.g. stage 3 with more recycles after stage 5), so segments are keyed by
+    # position in the log, not by stage number — keying by number would let a
+    # rerun overwrite the original start time and scramble the ordering.
+    headers = []
     first_time = prev_time = None
     for line in lines:
         m = time_pattern.match(line.strip())
         if not m:
             continue
-        time_str, content = m.groups()
-        t = datetime.strptime(time_str, '%H:%M:%S')
-        if prev_time and t < prev_time:
-            t = t.replace(day=2)
+        clock_str, stamp_str, content = m.groups()
+        if stamp_str:
+            t = datetime.strptime(stamp_str, '%Y-%m-%d %H:%M:%S')
+        else:
+            t = datetime.strptime(clock_str, '%H:%M:%S')
+            # Clock-only logs wrap at midnight; push past-midnight lines to day 2.
+            if prev_time and t < prev_time:
+                t = t.replace(day=2)
         if first_time is None:
             first_time = t
         prev_time = t
-        stage_match = re.match(r'STAGE\s+(\d+):', content)
+        stage_match = re.search(r'STAGE\s+(\d+):', content)
         if stage_match:
-            stage_times[int(stage_match.group(1))] = {'start': t}
-    if not stage_times or first_time is None:
+            headers.append((int(stage_match.group(1)), t))
+    if not headers or first_time is None:
         return None
-    sorted_stages = sorted(stage_times.keys())
+
+    seen = {}
     steps = []
-    for i, sn in enumerate(sorted_stages):
-        start = stage_times[sn]['start']
-        end = stage_times[sorted_stages[i+1]]['start'] if i+1 < len(sorted_stages) else prev_time
-        start_min = (start - first_time).total_seconds() / 60
-        duration = max((end - start).total_seconds() / 60, 0.5)
-        idx = sn - 1
-        name = PIPELINE_STAGES[idx] if idx < len(PIPELINE_STAGES) else f'Stage {sn}'
-        steps.append({'name': name, 'start': round(start_min, 1), 'duration': round(duration, 1)})
-    return steps if steps else None
+    for i, (stage_no, start) in enumerate(headers):
+        end = headers[i + 1][1] if i + 1 < len(headers) else prev_time
+        idx = stage_no - 1
+        name = PIPELINE_STAGES[idx] if idx < len(PIPELINE_STAGES) else f'Stage {stage_no}'
+        seen[stage_no] = seen.get(stage_no, 0) + 1
+        if seen[stage_no] > 1:
+            name = f'{name} (rerun {seen[stage_no] - 1})'
+        steps.append({
+            'name': name,
+            'start': round((start - first_time).total_seconds() / 60, 1),
+            'duration': round(max((end - start).total_seconds() / 60, 0.5), 1),
+        })
+    reruns = [n for n, c in seen.items() if c > 1]
+    if reruns:
+        print(f"  Note: log contains re-run stage(s) {sorted(reruns)}; "
+              "timeline shows them as separate chronological segments")
+    return steps
 
 
 def plot_execution_timeline(results_dir, output_path=None):
     """Plot 9: Gantt chart of pipeline stages."""
-    fig, ax = simple_ax(figsize=FIGSIZE)
-    ax.set_title('Execution Timeline', fontsize=14, fontweight='bold', pad=12)
+    fig, ax = simple_ax(figsize=TIMELINE_SIZE)
+    style_axis_hbar(ax)
+    ax.set_title('Execution timeline', fontsize=TITLE_FONTSIZE, pad=4)
 
     default_steps = [
         {'name': 'Stage 1: Backbone Gen.', 'start': 0, 'duration': 30},
@@ -709,25 +739,26 @@ def plot_execution_timeline(results_dir, output_path=None):
     y_positions = list(range(len(steps)-1, -1, -1))
 
     for i, (step, y_pos) in enumerate(zip(steps, y_positions)):
-        ax.barh(y_pos, step['duration'], left=step['start'], height=0.6,
-                color=colors[i], edgecolor='white', linewidth=0.5)
-        ax.text(-0.5, y_pos, step['name'], ha='right', va='center', fontsize=8)
+        ax.barh(y_pos, step['duration'], left=step['start'], height=0.55,
+                color=colors[i], edgecolor='white', linewidth=BAR_EDGE_LW)
+        ax.text(-total_time * 0.015, y_pos, step['name'], ha='right',
+                va='center', fontsize=BASE_FONTSIZE)
 
     total_label = f"Total: ~{total_time/60:.1f} hours" if total_time >= 60 else f"Total: ~{int(total_time)} min"
-    ax.barh(-1, total_time, left=0, height=0.6, color=GRAY, alpha=0.8)
-    ax.text(-0.5, -1, total_label, ha='right', va='center', fontsize=8, fontweight='bold')
+    ax.barh(-1, total_time, left=0, height=0.55, color=GRAY, alpha=0.8,
+            edgecolor='white', linewidth=BAR_EDGE_LW)
+    ax.text(-total_time * 0.015, -1, total_label, ha='right', va='center',
+            fontsize=BASE_FONTSIZE)
 
-    ax.set_xlabel('Time (minutes)', fontsize=11)
-    ax.set_xlim(-1, total_time * 1.1)
+    ax.set_xlabel('Time (minutes)', fontsize=XLABEL_FONTSIZE)
+    ax.set_xlim(0, total_time * 1.03)
     ax.set_ylim(-2, len(steps))
     ax.set_yticks([])
-    ax.xaxis.grid(True, linestyle='--', alpha=0.4)
     ax.spines['left'].set_visible(False)
 
     plt.tight_layout()
     if output_path:
         save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
     return fig
 
 
@@ -756,7 +787,7 @@ def create_separate_figures(results_dir: str, output_prefix: str = None,
 
     def _save(fig, name):
         if fig is not None:
-            saved_files.append(f"{output_prefix}_{name}.png")
+            saved_files.append(f"{output_prefix}_{name}.pdf")
             plt.close(fig)
 
     _save(plot_ddg_distribution(df, f"{output_prefix}_ddg_distribution"), "ddg_distribution")
@@ -798,20 +829,20 @@ def create_merged_figure(results_dir: str, output_prefix: str = None,
         print("Error: No design metrics found in", results_dir)
         return None
 
-    fig = plt.figure(figsize=(15, 13))
+    fig = plt.figure(figsize=MERGED_3x3_SIZE)
     axes = [fig.add_subplot(3, 3, i+1) for i in range(9)]
     for ax in axes:
         prettify_ax(ax)
 
     # Row 1
-    _plot_violin_strip_ax(axes[0], df['ddg'].values, 'ddG Distribution',
+    _plot_violin_strip_ax(axes[0], df['ddg'].values, 'ddG distribution',
                           'ddG (REU)',
                           (QUALITY_THRESHOLDS['ddg_good'], QUALITY_THRESHOLDS['ddg_acceptable']),
                           higher_is_better=False, palette_idx=0,
                           threshold_labels=('Excellent ddG', THRESHOLD_LABELS['ddg']))
 
     if 'iPAE' in df.columns:
-        _plot_violin_strip_ax(axes[1], df['iPAE'].dropna().values, 'iPAE Distribution',
+        _plot_violin_strip_ax(axes[1], df['iPAE'].dropna().values, 'iPAE distribution',
                               'iPAE',
                               (QUALITY_THRESHOLDS['ipae_good'], QUALITY_THRESHOLDS['ipae_acceptable']),
                               higher_is_better=False, palette_idx=1,
@@ -823,19 +854,25 @@ def create_merged_figure(results_dir: str, output_prefix: str = None,
     # Quality scatter — paper-aligned cutoffs (solid lines + legend).
     if 'iPAE' in df.columns:
         scores = calculate_composite_score(df)
+        style_axis_vbar(axes[2])
         scatter = axes[2].scatter(df['ddg'], df['iPAE'], c=scores, cmap='viridis',
-                                  s=40, alpha=0.8, edgecolors='white', linewidth=0.4)
+                                  s=DOT_SIZE, alpha=DOT_ALPHA, linewidths=0)
         ddg_cut = QUALITY_THRESHOLDS['ddg_acceptable']
         ipae_cut = QUALITY_THRESHOLDS['ipae_acceptable']
-        axes[2].axvline(x=ddg_cut, color=CAT_PALETTE[2], linestyle='-', alpha=0.85,
-                        linewidth=1.2, label=f"ddG<{ddg_cut:g}")
-        axes[2].axhline(y=ipae_cut, color=CAT_PALETTE[1], linestyle='-', alpha=0.85,
-                        linewidth=1.2, label=f"iPAE<{ipae_cut:g}")
-        axes[2].legend(loc='upper right', fontsize=6, frameon=True, framealpha=0.9)
-        axes[2].set_title('ddG vs iPAE (paper cutoffs)', fontsize=10, fontweight='bold', pad=8)
-        axes[2].set_xlabel('ddG', fontsize=8)
-        axes[2].set_ylabel('iPAE', fontsize=8)
-        plt.colorbar(scatter, ax=axes[2], shrink=0.8, label='Score')
+        axes[2].axvline(x=ddg_cut, color=CAT_PALETTE[2], linestyle='-', alpha=0.9,
+                        linewidth=GATE_LW, label=f"ddG<{ddg_cut:g}")
+        axes[2].axhline(y=ipae_cut, color=CAT_PALETTE[1], linestyle='-', alpha=0.9,
+                        linewidth=GATE_LW, label=f"iPAE<{ipae_cut:g}")
+        thin_legend(axes[2], loc='upper right')
+        axes[2].set_title('ddG vs iPAE (paper cutoffs)', fontsize=TITLE_FONTSIZE, pad=4)
+        axes[2].set_xlabel('ddG', fontsize=XLABEL_FONTSIZE)
+        axes[2].set_ylabel('iPAE')
+        axes[2].set_xlim(*SCATTER_DDG_XLIM)
+        axes[2].set_ylim(*SCATTER_IPAE_YLIM)
+        annotate_offscale(axes[2], df['ddg'], df['iPAE'],
+                           SCATTER_DDG_XLIM, SCATTER_IPAE_YLIM)
+        style_colorbar(plt.colorbar(scatter, ax=axes[2], shrink=0.85, aspect=22,
+                                    pad=0.03), 'Score')
     else:
         axes[2].text(0.5, 0.5, 'No data', ha='center', va='center', transform=axes[2].transAxes)
         axes[2].axis('off')
@@ -872,12 +909,12 @@ def create_merged_figure(results_dir: str, output_prefix: str = None,
 
     # Row 3: Composite score
     scores = calculate_composite_score(df)
-    _plot_violin_strip_ax(axes[6], scores.values, 'Composite Score', 'Score',
+    _plot_violin_strip_ax(axes[6], scores.values, 'Composite score', 'Score',
                           (0.7, 0.5), higher_is_better=True, palette_idx=4)
 
     # Table (three-line style)
     axes[7].axis('off')
-    axes[7].set_title('Top Designs', fontsize=10, fontweight='bold', pad=8)
+    axes[7].set_title('Top designs', fontsize=TITLE_FONTSIZE, pad=4)
     df_t = df.copy()
     df_t['score'] = scores
     col_defs = [('design_id', 'ID')]
@@ -890,16 +927,17 @@ def create_merged_figure(results_dir: str, output_prefix: str = None,
     n_cols = len(col_defs)
     table = axes[7].table(cellText=[['']*n_cols for _ in range(n_rows)],
                           loc='center', cellLoc='center', bbox=[0.0, 0.05, 1.0, 0.9])
+    table.auto_set_column_width(col=list(range(n_cols)))
     for j, (col, header) in enumerate(col_defs):
         cell = table[(0, j)]
-        cell.set_text_props(text=header, fontweight='bold', fontsize=8)
+        cell.set_text_props(text=header, fontsize=BASE_FONTSIZE)
         cell.set_facecolor('white')
     for i, (_, row) in enumerate(df_top.iterrows()):
         for j, (col, h) in enumerate(col_defs):
             cell = table[(i+1, j)]
             val = row[col]
             if col == 'design_id':
-                text = simplify_design_id(val)
+                text = compact_design_id(val)
             elif pd.isna(val):
                 text = '-'
             elif col == 'ddg':
@@ -908,27 +946,29 @@ def create_merged_figure(results_dir: str, output_prefix: str = None,
                 text = f'{val:.3f}'
             else:
                 text = f'{val:.2f}'
-            cell.set_text_props(text=text, fontsize=7)
+            cell.set_text_props(text=text, fontsize=TABLE_FONTSIZE)
     table.auto_set_font_size(False)
     for (row_idx, col_idx), cell in table.get_celld().items():
         cell.set_edgecolor('white')
         cell.set_linewidth(0)
         cell.set_height(0.11)
         if row_idx > 0 and row_idx % 2 == 0:
-            cell.set_facecolor('#F5F5F5')
+            cell.set_facecolor('#F7F7F7')
         elif row_idx > 0:
             cell.set_facecolor('white')
     bbox_t = [0.0, 0.05, 1.0, 0.9]
     xl, xr = bbox_t[0], bbox_t[0] + bbox_t[2]
     yb, yt = bbox_t[1], bbox_t[1] + bbox_t[3]
     rh = bbox_t[3] / n_rows
-    lkw = dict(color='black', linewidth=1.0, transform=axes[7].transAxes, clip_on=False)
+    lkw = dict(color='#333333', linewidth=RULE_LW,
+               transform=axes[7].transAxes, clip_on=False)
     axes[7].plot([xl, xr], [yt, yt], **lkw)
     axes[7].plot([xl, xr], [yt - rh, yt - rh], **lkw)
     axes[7].plot([xl, xr], [yb, yb], **lkw)
 
     # Timeline
-    axes[8].set_title('Timeline', fontsize=10, fontweight='bold', pad=8)
+    style_axis_hbar(axes[8])
+    axes[8].set_title('Timeline', fontsize=TITLE_FONTSIZE, pad=4)
     default_steps = [
         {'name': 'Backbone', 'start': 0, 'duration': 30},
         {'name': 'Seq Design', 'start': 30, 'duration': 120},
@@ -951,24 +991,26 @@ def create_merged_figure(results_dir: str, output_prefix: str = None,
     colors_t = [CAT_PALETTE[i % len(CAT_PALETTE)] for i in range(len(steps))]
     yp_t = list(range(len(steps)-1, -1, -1))
     for i, (step, yp) in enumerate(zip(steps, yp_t)):
-        axes[8].barh(yp, step['duration'], left=step['start'], height=0.6,
-                     color=colors_t[i], edgecolor='white', linewidth=0.5)
-        axes[8].text(-0.5, yp, step['name'], ha='right', va='center', fontsize=7)
-    axes[8].barh(-1, total_time, left=0, height=0.6, color=GRAY, alpha=0.8)
+        axes[8].barh(yp, step['duration'], left=step['start'], height=0.55,
+                     color=colors_t[i], edgecolor='white', linewidth=BAR_EDGE_LW)
+        axes[8].text(-total_time * 0.015, yp, step['name'], ha='right',
+                     va='center', fontsize=BASE_FONTSIZE)
+    axes[8].barh(-1, total_time, left=0, height=0.55, color=GRAY, alpha=0.8,
+                 edgecolor='white', linewidth=BAR_EDGE_LW)
     tl = f"~{total_time/60:.1f}h" if total_time >= 60 else f"~{int(total_time)}m"
-    axes[8].text(-0.5, -1, tl, ha='right', va='center', fontsize=7, fontweight='bold')
-    axes[8].set_xlabel('Time (min)', fontsize=8)
-    axes[8].set_xlim(-1, total_time * 1.1)
+    axes[8].text(-total_time * 0.015, -1, tl, ha='right', va='center',
+                 fontsize=BASE_FONTSIZE)
+    axes[8].set_xlabel('Time (min)', fontsize=XLABEL_FONTSIZE)
+    axes[8].set_xlim(0, total_time * 1.03)
     axes[8].set_ylim(-2, len(steps))
     axes[8].set_yticks([])
-    axes[8].xaxis.grid(True, linestyle='--', alpha=0.4)
     axes[8].spines['left'].set_visible(False)
 
     plt.tight_layout()
-    save_for_pub(fig, output_prefix, include_raster=True)
+    save_for_pub(fig, output_prefix)
     plt.close(fig)
-    print(f"\nSaved merged figure: {output_prefix}.png, {output_prefix}.pdf")
-    return f"{output_prefix}.png"
+    print(f"\nSaved merged figure: {output_prefix}.pdf")
+    return f"{output_prefix}.pdf"
 
 
 # ============================================================

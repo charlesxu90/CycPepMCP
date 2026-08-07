@@ -16,13 +16,17 @@ Generates separate figures after the HELM-GPT binder design workflow:
 11. Metrics Table - Top designs with three-line academic style
 12. Execution Timeline - Gantt chart of pipeline phases
 
-Each figure is saved as a separate PNG + PDF file.
+Every figure is saved as a print-sized PDF only (no PNG/SVG), styled through
+`workflow-skills/scripts/plot_style_utils.py`: Arial at 6-7 pt, 0.3 pt axes,
+2 pt data markers, mm-accurate Nature column widths, and `pdf.fonttype=42` so
+all text stays editable in Illustrator.
 A merged summary figure can also be generated.
 """
 
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -34,12 +38,33 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-# Color palettes
-CAT_PALETTE = sns.color_palette('colorblind')
-GRAY = [0.5, 0.5, 0.5]
+# Shared Nature-style figure vocabulary (fonts, line widths, dot size, sizes).
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+from plot_style_utils import (  # noqa: E402
+    ANNOT_FONTSIZE, BAR_EDGE_LW, BASE_FONTSIZE, CAT_PALETTE, CONTEXT_LW,
+    DEFAULT_FIGURE_RCPARAMS, DOT_ALPHA, DOT_DIAMETER_PT, DOT_SIZE, GATE_LW,
+    GRAY, GRID_COLOR,
+    GRID_LW, LEGEND_FONTSIZE, MERGED_3x3_SIZE, PANEL_SIZE, RADAR_LW,
+    RADAR_SIZE, RULE_LW, SCATTER_SIZE, TABLE_FONTSIZE, TABLE_SIZE,
+    TIMELINE_SIZE, TITLE_FONTSIZE, XLABEL_FONTSIZE, annotate_offscale,
+    apply_nature_rcparams, mm_size, prettify_ax, save_pdf, simple_ax, stat_box,
+    style_axis_hbar, style_axis_vbar, style_box, style_colorbar, style_violin,
+    thin_legend, tier_color,
+)
 
-# Figure size for individual plots
-FIGSIZE = (5, 5)
+# Figure size for individual distribution plots (45 x 40 mm print size).
+FIGSIZE = PANEL_SIZE
+
+# Print size for the top-designs table, narrower than the shared TABLE_MM
+# (89 x 34) so the panel drops into a 68 mm figure slot. Saved with
+# bbox_inches=None so the PDF page is exactly this size.
+METRICS_TABLE_MM = (68.0, 39.0)
+METRICS_TABLE_SIZE = mm_size(*METRICS_TABLE_MM)
+# Clearance above the top rule and below the bottom rule. Flush against the page
+# edge the strokes read as clipped, so they get this much white to sit against.
+METRICS_TABLE_RULE_INSET_MM = 0.6
 
 # Centralized PASS-gate thresholds (single source of truth: benchmark/configs/workflows.yaml).
 # Each entry is (excellent_value, gate_value, label); gate_value is the primary PASS gate,
@@ -57,28 +82,30 @@ from benchmark.configs import thresholds as cfg  # noqa: E402
 _HG_PRIMARY = cfg.HELMGPT_PASS_GATE.primary
 _HG_EXCELLENT = cfg.HELMGPT_PASS_GATE.excellent
 
+# Legend labels carry the metric name only; the plot helpers append the numeric
+# cutoff, so nothing is duplicated and a 45 mm panel is not widened by the key.
 WORKFLOW_THRESHOLDS = {
-    'kd':         (_HG_EXCELLENT['kd_um_max'],         _HG_PRIMARY['kd_um_max'],         f"Workflow gate KD<{_HG_PRIMARY['kd_um_max']} uM (PASS, lower is better)"),
-    'perm':       (_HG_EXCELLENT['perm_logpapp_min'],  _HG_PRIMARY['perm_logpapp_min'],  f"Workflow gate perm>{_HG_PRIMARY['perm_logpapp_min']} log cm/s (PASS)"),
-    'boltz_aff':  (_HG_EXCELLENT['boltz_aff_min'],     _HG_PRIMARY['boltz_aff_min'],     f"Workflow gate Boltz-2 affinity>{_HG_PRIMARY['boltz_aff_min']}"),
-    'boltz_prob': (_HG_EXCELLENT['boltz_prob_min'],    _HG_PRIMARY['boltz_prob_min'],    f"Workflow gate Boltz-2 binding prob>{_HG_PRIMARY['boltz_prob_min']}"),
-    'boltz_iptm': (_HG_EXCELLENT['boltz_iptm_min'],    _HG_PRIMARY['boltz_iptm_min'],    f"Workflow gate Boltz-2 ligand iPTM>{_HG_PRIMARY['boltz_iptm_min']}"),
-    'af3_iptm':   (_HG_EXCELLENT['af3_iptm_min'],      _HG_PRIMARY['af3_iptm_min'],      f"Workflow gate AF3 iPTM>{_HG_PRIMARY['af3_iptm_min']}"),
-    'af3_plddt':  (_HG_EXCELLENT['af3_plddt_min'],     _HG_PRIMARY['af3_plddt_min'],     f"Workflow gate AF3 pLDDT>{_HG_PRIMARY['af3_plddt_min']}"),
-    'gnina_cnn':  (_HG_EXCELLENT['gnina_cnn_min'],     _HG_PRIMARY['gnina_cnn_min'],     f"Workflow gate Gnina CNN pKd>{_HG_PRIMARY['gnina_cnn_min']}"),
-    'gnina_vina': (_HG_EXCELLENT['gnina_vina_max'],    _HG_PRIMARY['gnina_vina_max'],    f"Workflow gate Gnina Vina<{_HG_PRIMARY['gnina_vina_max']} kcal/mol"),
+    'kd':         (_HG_EXCELLENT['kd_um_max'],        _HG_PRIMARY['kd_um_max'],        'PASS gate KD'),
+    'perm':       (_HG_EXCELLENT['perm_logpapp_min'], _HG_PRIMARY['perm_logpapp_min'], 'PASS gate perm'),
+    'boltz_aff':  (_HG_EXCELLENT['boltz_aff_min'],    _HG_PRIMARY['boltz_aff_min'],    'PASS gate affinity'),
+    'boltz_prob': (_HG_EXCELLENT['boltz_prob_min'],   _HG_PRIMARY['boltz_prob_min'],   'PASS gate probability'),
+    'boltz_iptm': (_HG_EXCELLENT['boltz_iptm_min'],   _HG_PRIMARY['boltz_iptm_min'],   'PASS gate iPTM'),
+    'af3_iptm':   (_HG_EXCELLENT['af3_iptm_min'],     _HG_PRIMARY['af3_iptm_min'],     'PASS gate iPTM'),
+    'af3_plddt':  (_HG_EXCELLENT['af3_plddt_min'],    _HG_PRIMARY['af3_plddt_min'],    'PASS gate pLDDT'),
+    'gnina_cnn':  (_HG_EXCELLENT['gnina_cnn_min'],    _HG_PRIMARY['gnina_cnn_min'],    'PASS gate CNN pKd'),
+    'gnina_vina': (_HG_EXCELLENT['gnina_vina_max'],   _HG_PRIMARY['gnina_vina_max'],   'PASS gate Vina'),
 }
 
 EXCELLENT_LABEL = {
-    'kd':         'Excellent KD<1 μM',
-    'perm':       'Excellent perm>-5.0',
-    'boltz_aff':  'Excellent Boltz-2 affinity>0.5',
-    'boltz_prob': 'Excellent Boltz-2 prob>0.6',
-    'boltz_iptm': 'Excellent Boltz-2 iPTM>0.80',
-    'af3_iptm':   'Excellent AF3 iPTM>0.80',
-    'af3_plddt':  'Excellent AF3 pLDDT>0.85',
-    'gnina_cnn':  'Excellent Gnina CNN pKd>7.0',
-    'gnina_vina': 'Excellent Gnina Vina<-8.0',
+    'kd':         'Excellent KD',
+    'perm':       'Excellent perm',
+    'boltz_aff':  'Excellent affinity',
+    'boltz_prob': 'Excellent probability',
+    'boltz_iptm': 'Excellent iPTM',
+    'af3_iptm':   'Excellent iPTM',
+    'af3_plddt':  'Excellent pLDDT',
+    'gnina_cnn':  'Excellent CNN pKd',
+    'gnina_vina': 'Excellent Vina',
 }
 
 # Back-compat: scalar dict keyed like the older code expected.
@@ -104,6 +131,13 @@ QUALITY_THRESHOLDS = {
     'gnina_vina_acceptable': -5.0,
 }
 
+# Fixed axis ranges for the KD-vs-permeability scatter. Auto-scaling made the
+# same design land at a different position in every batch, so the panel is
+# pinned instead and stays visually comparable across runs. annotate_offscale()
+# flags any design the window excludes.
+SCATTER_KD_XLIM = (0.0, 12.0)        # KRAS KD (uM)
+SCATTER_PERM_YLIM = (-8.0, 0.0)      # permeability (log cm/s)
+
 
 def _thr(metric):
     """Return (excellent_value, gate_value, gate_label, excellent_label)."""
@@ -111,52 +145,24 @@ def _thr(metric):
     return e, g, gl, EXCELLENT_LABEL[metric]
 
 
-def prettify_ax(ax):
-    """Make axes more pleasant to look at."""
-    for i, spine in enumerate(ax.spines.values()):
-        if i == 3 or i == 1:  # top and right
-            spine.set_visible(False)
-    ax.set_frameon = True
-    ax.tick_params(direction='out', length=3, color='k')
-    ax.set_axisbelow(True)
+def set_pub_plot_context(context=None):
+    """Apply the Nature print rcParams (Arial, 7 pt titles, 6 pt body)."""
+    apply_nature_rcparams(DEFAULT_FIGURE_RCPARAMS)
 
 
-def simple_ax(figsize=FIGSIZE, **kwargs):
-    """Shortcut to make and 'prettify' a simple figure with 1 axis."""
-    fig = plt.figure(figsize=figsize)
-    ax = fig.add_subplot(111, **kwargs)
-    prettify_ax(ax)
-    return fig, ax
+def save_for_pub(fig, path, bbox_inches='tight'):
+    """Save figure as a single editable-text PDF.
 
-
-def set_pub_plot_context(context="talk"):
-    """Set publication-quality plot context."""
-    sns.set(style="white", context=context)
-
-
-def save_for_pub(fig, path, dpi=300, include_raster=True):
-    """Save figure in publication-ready formats."""
-    fig.savefig(path + ".pdf", dpi=dpi, bbox_inches='tight', transparent=True)
-    if include_raster:
-        fig.savefig(path + ".png", dpi=dpi, bbox_inches='tight', transparent=True)
+    Pass ``bbox_inches=None`` for figures whose page must stay at the exact
+    authored mm size rather than being cropped to the drawn content.
+    """
+    return save_pdf(fig, path, bbox_inches=bbox_inches)
 
 
 def get_color_for_value(value, threshold_good, threshold_acceptable, higher_is_better=True):
-    """Get color based on quality thresholds."""
-    if higher_is_better:
-        if value >= threshold_good:
-            return CAT_PALETTE[2]  # Green
-        elif value >= threshold_acceptable:
-            return CAT_PALETTE[1]  # Orange
-        else:
-            return CAT_PALETTE[3]  # Red
-    else:
-        if value <= threshold_good:
-            return CAT_PALETTE[2]  # Green
-        elif value <= threshold_acceptable:
-            return CAT_PALETTE[1]  # Orange
-        else:
-            return CAT_PALETTE[3]  # Red
+    """Quality-tier colour for a metric value (see plot_style_utils.tier_color)."""
+    return tier_color(value, threshold_good, threshold_acceptable,
+                      higher_is_better=higher_is_better)
 
 
 # ============================================================
@@ -394,54 +400,46 @@ def plot_violin_strip(values, title, ylabel, thresholds, higher_is_better=True,
     faint). `threshold_labels` populates the legend; the value is appended.
     """
     fig, ax = simple_ax(figsize=figsize)
+    style_axis_vbar(ax)
 
     # Violin
     parts = ax.violinplot(values, positions=[0], showmeans=False,
                           showmedians=False, showextrema=False)
-    for pc in parts['bodies']:
-        pc.set_facecolor(CAT_PALETTE[palette_idx])
-        pc.set_alpha(0.2)
+    style_violin(parts, CAT_PALETTE[palette_idx])
 
     # Box overlay
     bp = ax.boxplot(values, positions=[0], widths=0.15, patch_artist=True,
                     showfliers=False, zorder=2)
-    bp['boxes'][0].set_facecolor('white')
-    bp['boxes'][0].set_alpha(0.8)
-    bp['medians'][0].set_color('black')
-    bp['medians'][0].set_linewidth(1.5)
+    style_box(bp)
 
     # Strip (jittered points)
     jitter = np.random.default_rng(42).uniform(-0.12, 0.12, len(values))
     colors = [get_color_for_value(v, thresholds[0], thresholds[1],
                                    higher_is_better=higher_is_better)
               for v in values]
-    ax.scatter(jitter, values, c=colors, s=40, alpha=0.7, edgecolors='white',
-               linewidth=0.5, zorder=3)
+    ax.scatter(jitter, values, c=colors, s=DOT_SIZE, alpha=DOT_ALPHA,
+               linewidths=0, zorder=3)
 
     # Workflow gate (solid prominent) + excellent context (dashed faint)
-    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='-', alpha=0.85,
-               linewidth=1.4, label=f"{threshold_labels[1]} ({thresholds[1]:g})")
-    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.55,
-               linewidth=1.0, label=f"{threshold_labels[0]} ({thresholds[0]:g})")
-    ax.legend(loc='lower left', fontsize=7, frameon=True, framealpha=0.9)
+    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='-', alpha=0.9,
+               linewidth=GATE_LW, label=f"{threshold_labels[1]} ({thresholds[1]:g})")
+    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.7,
+               linewidth=CONTEXT_LW, label=f"{threshold_labels[0]} ({thresholds[0]:g})")
+    thin_legend(ax, loc='best')
 
     # Summary stats
     median = np.median(values)
     mean = np.mean(values)
-    ax.text(0.95, 0.97, f'n={len(values)}\nmedian={median:.2f}\nmean={mean:.2f}',
-            transform=ax.transAxes, fontsize=9, va='top', ha='right',
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
+    stat_box(ax, f'n={len(values)}\nmedian={median:.2f}\nmean={mean:.2f}')
 
-    ax.set_title(title, fontsize=14, fontweight='bold', pad=12)
-    ax.set_ylabel(ylabel, fontsize=11)
+    ax.set_title(title, fontsize=TITLE_FONTSIZE, pad=4)
+    ax.set_ylabel(ylabel)
     ax.set_xlim(-0.5, 0.5)
     ax.set_xticks([])
-    ax.yaxis.grid(True, linestyle='--', alpha=0.4)
 
     plt.tight_layout()
     if output_path:
         save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
     return fig
 
 
@@ -449,43 +447,37 @@ def _plot_violin_strip_ax(ax, values, title, ylabel, thresholds, higher_is_bette
                            palette_idx=0,
                            threshold_labels=('Excellent', 'Workflow gate')):
     """Internal: violin + strip on a given axis (for merged figure), with rfpeptides line style."""
+    style_axis_vbar(ax)
+
     parts = ax.violinplot(values, positions=[0], showmeans=False,
                           showmedians=False, showextrema=False)
-    for pc in parts['bodies']:
-        pc.set_facecolor(CAT_PALETTE[palette_idx])
-        pc.set_alpha(0.2)
+    style_violin(parts, CAT_PALETTE[palette_idx])
 
     bp = ax.boxplot(values, positions=[0], widths=0.15, patch_artist=True,
                     showfliers=False, zorder=2)
-    bp['boxes'][0].set_facecolor('white')
-    bp['boxes'][0].set_alpha(0.8)
-    bp['medians'][0].set_color('black')
-    bp['medians'][0].set_linewidth(1.5)
+    style_box(bp)
 
     jitter = np.random.default_rng(42).uniform(-0.12, 0.12, len(values))
     colors = [get_color_for_value(v, thresholds[0], thresholds[1],
                                    higher_is_better=higher_is_better)
               for v in values]
-    ax.scatter(jitter, values, c=colors, s=30, alpha=0.7, edgecolors='white',
-               linewidth=0.4, zorder=3)
+    ax.scatter(jitter, values, c=colors, s=DOT_SIZE, alpha=DOT_ALPHA,
+               linewidths=0, zorder=3)
 
-    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='-', alpha=0.85,
-               linewidth=1.2, label=f"{threshold_labels[1]} ({thresholds[1]:g})")
-    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.55,
-               linewidth=0.9, label=f"{threshold_labels[0]} ({thresholds[0]:g})")
-    ax.legend(loc='lower left', fontsize=6, frameon=True, framealpha=0.9)
+    ax.axhline(y=thresholds[1], color=CAT_PALETTE[1], linestyle='-', alpha=0.9,
+               linewidth=GATE_LW, label=f"{threshold_labels[1]} ({thresholds[1]:g})")
+    ax.axhline(y=thresholds[0], color=CAT_PALETTE[2], linestyle='--', alpha=0.7,
+               linewidth=CONTEXT_LW, label=f"{threshold_labels[0]} ({thresholds[0]:g})")
+    thin_legend(ax, loc='best')
 
     median = np.median(values)
     mean = np.mean(values)
-    ax.text(0.95, 0.97, f'n={len(values)}\nmed={median:.2f}\nmean={mean:.2f}',
-            transform=ax.transAxes, fontsize=7, va='top', ha='right',
-            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
+    stat_box(ax, f'n={len(values)}\nmed={median:.2f}\nmean={mean:.2f}')
 
-    ax.set_title(title, fontsize=10, fontweight='bold', pad=8)
-    ax.set_ylabel(ylabel, fontsize=8)
+    ax.set_title(title, fontsize=TITLE_FONTSIZE, pad=4)
+    ax.set_ylabel(ylabel)
     ax.set_xlim(-0.5, 0.5)
     ax.set_xticks([])
-    ax.yaxis.grid(True, linestyle='--', alpha=0.4)
 
 
 # ============================================================
@@ -497,7 +489,7 @@ def plot_kd_distribution(df, output_path=None):
     values = df['raw_kras_kd'].dropna().values
     e, g, gl, el = _thr('kd')
     return plot_violin_strip(
-        values, 'KRAS Binding Affinity (KD)',
+        values, 'KRAS binding affinity (KD)',
         'KD (\u03bcM, lower is better)',
         (e, g),
         higher_is_better=False, palette_idx=0, output_path=output_path,
@@ -509,7 +501,7 @@ def plot_permeability_distribution(df, output_path=None):
     values = df['raw_permeability'].dropna().values
     e, g, gl, el = _thr('perm')
     return plot_violin_strip(
-        values, 'Membrane Permeability',
+        values, 'Membrane permeability',
         'log Perm (cm/s, higher is better)',
         (e, g),
         higher_is_better=True, palette_idx=1, output_path=output_path,
@@ -518,37 +510,43 @@ def plot_permeability_distribution(df, output_path=None):
 
 def plot_quality_scatter(df, output_path=None):
     """Plot 3: Scatter plot of KD vs Permeability colored by composite score."""
-    fig, ax = simple_ax(figsize=(6, 5))
+    fig, ax = simple_ax(figsize=SCATTER_SIZE)
+    style_axis_vbar(ax)
     scores = calculate_composite_score(df)
 
     scatter = ax.scatter(df['raw_kras_kd'], df['raw_permeability'], c=scores,
-                        cmap='viridis', s=80, alpha=0.8, edgecolors='white', linewidth=0.5)
+                        cmap='viridis', s=DOT_SIZE, alpha=DOT_ALPHA, linewidths=0)
 
     kd_gate = WORKFLOW_THRESHOLDS['kd'][1]
     perm_gate = WORKFLOW_THRESHOLDS['perm'][1]
+    kd_lo, kd_hi = SCATTER_KD_XLIM
+    perm_lo, perm_hi = SCATTER_PERM_YLIM
 
     # Shaded PASS region (KD<gate AND perm>gate)
-    rect_good = Rectangle((0, perm_gate), kd_gate, 0 - perm_gate,
-                          linewidth=0, facecolor=CAT_PALETTE[2], alpha=0.12)
+    rect_good = Rectangle((kd_lo, perm_gate), kd_gate - kd_lo, perm_hi - perm_gate,
+                          linewidth=0, facecolor=CAT_PALETTE[2], alpha=0.10)
     ax.add_patch(rect_good)
 
-    ax.axvline(x=kd_gate, color=CAT_PALETTE[2], linestyle='-', alpha=0.85,
-               linewidth=1.4, label=f"Workflow gate KD<{kd_gate:g} \u03bcM")
-    ax.axhline(y=perm_gate, color=CAT_PALETTE[1], linestyle='-', alpha=0.85,
-               linewidth=1.4, label=f"Workflow gate perm>{perm_gate:g}")
-    ax.legend(loc='upper right', fontsize=7, frameon=True, framealpha=0.9)
+    ax.axvline(x=kd_gate, color=CAT_PALETTE[2], linestyle='-', alpha=0.9,
+               linewidth=GATE_LW, label=f"Workflow gate KD<{kd_gate:g} \u03bcM")
+    ax.axhline(y=perm_gate, color=CAT_PALETTE[1], linestyle='-', alpha=0.9,
+               linewidth=GATE_LW, label=f"Workflow gate perm>{perm_gate:g}")
+    thin_legend(ax, loc='upper right')
 
-    ax.set_title('KD vs Permeability', fontsize=14, fontweight='bold', pad=12)
-    ax.set_xlabel('KRAS KD (\u03bcM, lower is better)', fontsize=11)
-    ax.set_ylabel('Permeability (log cm/s, higher is better)', fontsize=11)
+    ax.set_title('KD vs permeability', fontsize=TITLE_FONTSIZE, pad=4)
+    ax.set_xlabel('KRAS KD (\u03bcM, lower is better)', fontsize=XLABEL_FONTSIZE)
+    ax.set_ylabel('Permeability (log cm/s, higher is better)')
+    ax.set_xlim(kd_lo, kd_hi)
+    ax.set_ylim(perm_lo, perm_hi)
+    annotate_offscale(ax, df['raw_kras_kd'], df['raw_permeability'],
+                      SCATTER_KD_XLIM, SCATTER_PERM_YLIM)
 
-    cbar = plt.colorbar(scatter, ax=ax, shrink=0.8)
-    cbar.set_label('Composite Score', fontsize=10)
+    cbar = plt.colorbar(scatter, ax=ax, shrink=0.85, aspect=22, pad=0.03)
+    style_colorbar(cbar, 'Composite score')
 
     plt.tight_layout()
     if output_path:
         save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
     return fig
 
 
@@ -562,7 +560,7 @@ def plot_af3_iptm_distribution(df, output_path=None):
     if len(values) == 0:
         return None
     e, g, gl, el = _thr('af3_iptm' if col == 'af3_iptm' else 'boltz_iptm')
-    title = 'AlphaFold3 Interface iPTM' if col == 'af3_iptm' else 'Boltz-2 Interface iPTM (AF3 substitute)'
+    title = 'AlphaFold3 interface iPTM' if col == 'af3_iptm' else 'Boltz-2 interface iPTM (AF3 substitute)'
     fig = plot_violin_strip(
         values, title, 'iPTM (higher is better)',
         (e, g),
@@ -583,7 +581,7 @@ def plot_gnina_cnn_distribution(df, output_path=None):
         return None
     e, g, gl, el = _thr('gnina_cnn')
     return plot_violin_strip(
-        values, 'Gnina CNN Affinity', 'pKd (higher is better)',
+        values, 'Gnina CNN affinity', 'pKd (higher is better)',
         (e, g),
         higher_is_better=True, palette_idx=3, output_path=output_path,
         threshold_labels=(el, gl))
@@ -598,7 +596,7 @@ def plot_gnina_vina_distribution(df, output_path=None):
         return None
     e, g, gl, el = _thr('gnina_vina')
     return plot_violin_strip(
-        values, 'Gnina Vina Score', 'kcal/mol (more negative is better)',
+        values, 'Gnina Vina score', 'kcal/mol (more negative is better)',
         (e, g),
         higher_is_better=False, palette_idx=4, output_path=output_path,
         threshold_labels=(el, gl))
@@ -613,7 +611,7 @@ def plot_boltz_affinity_distribution(df, output_path=None):
         return None
     e, g, gl, el = _thr('boltz_aff')
     return plot_violin_strip(
-        values, 'Boltz-2 Ensemble Affinity', 'Avg Affinity (higher is better)',
+        values, 'Boltz-2 ensemble affinity', 'Avg Affinity (higher is better)',
         (e, g),
         higher_is_better=True, palette_idx=0, output_path=output_path,
         threshold_labels=(el, gl))
@@ -628,7 +626,7 @@ def plot_boltz_probability_distribution(df, output_path=None):
         return None
     e, g, gl, el = _thr('boltz_prob')
     fig = plot_violin_strip(
-        values, 'Boltz-2 Binding Probability', 'Avg Probability (higher is better)',
+        values, 'Boltz-2 binding probability', 'Avg Probability (higher is better)',
         (e, g),
         higher_is_better=True, palette_idx=1, output_path=output_path,
         threshold_labels=(el, gl))
@@ -642,7 +640,7 @@ def plot_composite_distribution(df, output_path=None):
     """Plot 9: Composite score distribution."""
     scores = calculate_composite_score(df).values
     fig = plot_violin_strip(
-        scores, 'Composite Score Distribution',
+        scores, 'Composite score distribution',
         'Score', (0.7, 0.5),
         higher_is_better=True, palette_idx=4, output_path=output_path)
     # Add viridis-colored points on top
@@ -653,8 +651,8 @@ def plot_composite_distribution(df, output_path=None):
             coll.remove()
             break
     jitter = np.random.default_rng(42).uniform(-0.12, 0.12, len(scores))
-    ax.scatter(jitter, scores, c=scores, cmap='viridis', s=40, alpha=0.7,
-               edgecolors='white', linewidth=0.5, zorder=3)
+    ax.scatter(jitter, scores, c=scores, cmap='viridis', s=DOT_SIZE,
+               alpha=DOT_ALPHA, linewidths=0, zorder=3)
     if output_path:
         save_for_pub(fig, output_path)
     return fig
@@ -710,23 +708,23 @@ def plot_radar_chart(df, output_path=None, top_n=5):
     angles = np.linspace(0, 2 * np.pi, n_metrics, endpoint=False).tolist()
     angles += angles[:1]
 
-    fig = plt.figure(figsize=(7.5, 6.5))
+    fig = plt.figure(figsize=RADAR_SIZE)
     ax = fig.add_subplot(111, polar=True)
 
     # Spider-web grid (polygons + spokes)
     grid_levels = [0.2, 0.4, 0.6, 0.8, 1.0]
     for level in grid_levels:
         ax.plot(angles, [level] * n_metrics + [level],
-                color='gray', linewidth=0.8, alpha=0.35)
+                color=GRID_COLOR, linewidth=GRID_LW, zorder=0)
     for a in angles[:-1]:
-        ax.plot([a, a], [0, 1], color='gray', linewidth=0.8, alpha=0.35)
+        ax.plot([a, a], [0, 1], color=GRID_COLOR, linewidth=GRID_LW, zorder=0)
     ax.yaxis.grid(False); ax.xaxis.grid(False)
 
     # Median-of-set reference polygon (dashed gray)
     median_vals = df_n.median().reindex(labels).tolist()
     ax.plot(angles, median_vals + median_vals[:1], '--',
-            color='gray', linewidth=1.0, alpha=0.55, label='Set median')
-    ax.fill(angles, median_vals + median_vals[:1], color='gray', alpha=0.05)
+            color='#999999', linewidth=CONTEXT_LW, label='Set median')
+    ax.fill(angles, median_vals + median_vals[:1], color='#999999', alpha=0.06)
 
     # Top-N polygons in colorblind palette
     radar_colors = sns.color_palette('colorblind', n_colors=len(top_idx))
@@ -734,35 +732,40 @@ def plot_radar_chart(df, output_path=None, top_n=5):
         values = df_n.loc[idx, labels].tolist()
         values += values[:1]
         design_id = df_work.loc[idx].get('design_id', f'#{i}')
-        ax.plot(angles, values, 'o-', linewidth=1.6, color=radar_colors[i],
-                label=str(design_id), markersize=4.5)
-        ax.fill(angles, values, alpha=0.10, color=radar_colors[i])
+        ax.plot(angles, values, 'o-', linewidth=RADAR_LW, color=radar_colors[i],
+                label=str(design_id), markersize=DOT_DIAMETER_PT,
+                markeredgewidth=0)
+        ax.fill(angles, values, alpha=0.08, color=radar_colors[i])
 
     ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(labels, fontsize=10)
+    ax.set_xticklabels(labels, fontsize=BASE_FONTSIZE)
     ax.set_ylim(0, 1)
     ax.set_yticks(grid_levels)
-    ax.set_yticklabels(['0.2', '0.4', '0.6', '0.8', '1.0'], fontsize=7, color='gray')
-    ax.set_title(f'Top {len(top_idx)} Candidates — Multi-Metric Profile\n'
+    ax.set_yticklabels(['0.2', '0.4', '0.6', '0.8', '1.0'],
+                       fontsize=ANNOT_FONTSIZE, color='#999999')
+    ax.set_title(f'Top {len(top_idx)} candidates — multi-metric profile\n'
                  '(per-axis min-max within set; outer = better)',
-                 fontsize=12, fontweight='bold', pad=18)
+                 fontsize=TITLE_FONTSIZE, pad=10)
     ax.spines['polar'].set_visible(False)
-    ax.legend(loc='center left', bbox_to_anchor=(1.18, 0.5), fontsize=8,
-              frameon=True, framealpha=0.9)
+    ax.tick_params(axis='both', pad=2)
+    # 1.25 keeps the key clear of the right-hand spoke label (KD).
+    ax.legend(loc='center left', bbox_to_anchor=(1.25, 0.5),
+              fontsize=LEGEND_FONTSIZE, frameon=False, handlelength=1.6,
+              handletextpad=0.5, borderpad=0.2, labelspacing=0.3)
 
     plt.tight_layout()
     if output_path:
         save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
     return fig
 
 
 def plot_metrics_table(df, output_path=None, top_n=6):
     """Plot 10: Top designs table with three-line academic style."""
-    fig = plt.figure(figsize=(6, 4))
-    ax = fig.add_subplot(111)
+    fig = plt.figure(figsize=METRICS_TABLE_SIZE)
+    # Axes covers the whole page: the table *is* the figure, so there are no
+    # outer margins to trim later.
+    ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
     ax.axis('off')
-    ax.set_title('Top Designs', fontsize=14, fontweight='bold', pad=12)
 
     df = df.copy()
     df['score'] = calculate_composite_score(df)
@@ -785,16 +788,23 @@ def plot_metrics_table(df, output_path=None, top_n=6):
     n_rows = len(df_sorted) + 1
     n_cols = len(col_defs)
 
+    # One bbox for both the table and its three rules, so they cannot drift.
+    # Full width, inset vertically so the top and bottom rules read as edges
+    # rather than as strokes clipped by the page boundary.
+    rule_pad = METRICS_TABLE_RULE_INSET_MM / METRICS_TABLE_MM[1]
+    bbox = [0.0, rule_pad, 1.0, 1.0 - 2 * rule_pad]
     table = ax.table(
         cellText=[['']*n_cols for _ in range(n_rows)],
         loc='center', cellLoc='center',
-        bbox=[0.02, 0.05, 0.96, 0.85]
+        bbox=bbox
     )
+    # Size columns to content so long design IDs are not clipped.
+    table.auto_set_column_width(col=list(range(n_cols)))
 
     # Header
     for j, (col, header) in enumerate(col_defs):
         cell = table[(0, j)]
-        cell.set_text_props(text=header, fontweight='bold', fontsize=9)
+        cell.set_text_props(text=header, fontsize=BASE_FONTSIZE)
         cell.set_facecolor('white')
 
     # Data
@@ -812,7 +822,7 @@ def plot_metrics_table(df, output_path=None, top_n=6):
                 text = f'{val:.2f}'
             else:
                 text = f'{val:.2f}'
-            cell.set_text_props(text=text, fontsize=8)
+            cell.set_text_props(text=text, fontsize=TABLE_FONTSIZE)
 
     # Three-line style with alternating row shading
     table.auto_set_font_size(False)
@@ -821,35 +831,35 @@ def plot_metrics_table(df, output_path=None, top_n=6):
         cell.set_linewidth(0)
         cell.set_height(0.11)
         if row_idx > 0 and row_idx % 2 == 0:
-            cell.set_facecolor('#F5F5F5')
+            cell.set_facecolor('#F7F7F7')
         elif row_idx > 0:
             cell.set_facecolor('white')
 
-    # Draw three horizontal lines
-    bbox = [0.02, 0.05, 0.96, 0.85]
-    x_left = bbox[0]
-    x_right = bbox[0] + bbox[2]
-    y_bottom = bbox[1]
-    y_top = bbox[1] + bbox[3]
+    # Three-line rules: above the header, under the header, under the last row.
+    x_left, x_right = bbox[0], bbox[0] + bbox[2]
+    y_bottom, y_top = bbox[1], bbox[1] + bbox[3]
     row_h = bbox[3] / n_rows
     y_header_bottom = y_top - row_h
 
-    line_kwargs = dict(color='black', linewidth=1.2, transform=ax.transAxes, clip_on=False)
+    line_kwargs = dict(color='#333333', linewidth=RULE_LW,
+                       transform=ax.transAxes, clip_on=False)
     ax.plot([x_left, x_right], [y_top, y_top], **line_kwargs)
     ax.plot([x_left, x_right], [y_header_bottom, y_header_bottom], **line_kwargs)
     ax.plot([x_left, x_right], [y_bottom, y_bottom], **line_kwargs)
 
-    plt.tight_layout()
+    # No tight_layout: it would re-inset the full-bleed axes and bring the
+    # margins back.
     if output_path:
-        save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
+        # bbox_inches=None: keep the page at METRICS_TABLE_MM exactly.
+        save_for_pub(fig, output_path, bbox_inches=None)
     return fig
 
 
 def plot_execution_timeline(output_path=None):
     """Plot 11: Gantt chart of HELM-GPT pipeline phases."""
-    fig, ax = simple_ax(figsize=FIGSIZE)
-    ax.set_title('Execution Timeline', fontsize=14, fontweight='bold', pad=12)
+    fig, ax = simple_ax(figsize=TIMELINE_SIZE)
+    style_axis_hbar(ax)
+    ax.set_title('Execution timeline', fontsize=TITLE_FONTSIZE, pad=4)
 
     steps = [
         {'name': 'Phase 1: RL Opt.', 'start': 0, 'duration': 60},
@@ -865,29 +875,29 @@ def plot_execution_timeline(output_path=None):
     y_positions = list(range(len(steps)-1, -1, -1))
 
     for i, (step, y_pos) in enumerate(zip(steps, y_positions)):
-        ax.barh(y_pos, step['duration'], left=step['start'], height=0.6,
-                color=colors[i], edgecolor='white', linewidth=0.5)
-        ax.text(-0.5, y_pos, step['name'], ha='right', va='center', fontsize=8)
+        ax.barh(y_pos, step['duration'], left=step['start'], height=0.55,
+                color=colors[i], edgecolor='white', linewidth=BAR_EDGE_LW)
+        ax.text(-total_time * 0.015, y_pos, step['name'], ha='right',
+                va='center', fontsize=BASE_FONTSIZE)
 
-    ax.annotate('parallel', xy=(75, 3.5), fontsize=7, color='gray',
-                fontstyle='italic', ha='center')
+    ax.annotate('parallel', xy=(75, 3.5), fontsize=ANNOT_FONTSIZE,
+                color='#777777', fontstyle='italic', ha='center')
 
     total_label = f"Total: ~{total_time/60:.1f} hours"
-    ax.barh(-1, total_time, left=0, height=0.6, color=GRAY, alpha=0.8)
-    ax.text(-0.5, -1, total_label, ha='right', va='center',
-            fontsize=8, fontweight='bold')
+    ax.barh(-1, total_time, left=0, height=0.55, color=GRAY, alpha=0.8,
+            edgecolor='white', linewidth=BAR_EDGE_LW)
+    ax.text(-total_time * 0.015, -1, total_label, ha='right', va='center',
+            fontsize=BASE_FONTSIZE)
 
-    ax.set_xlabel('Time (minutes)', fontsize=11)
-    ax.set_xlim(-1, total_time * 1.1)
+    ax.set_xlabel('Time (minutes)', fontsize=XLABEL_FONTSIZE)
+    ax.set_xlim(0, total_time * 1.03)
     ax.set_ylim(-2, len(steps))
     ax.set_yticks([])
-    ax.xaxis.grid(True, linestyle='--', alpha=0.4)
     ax.spines['left'].set_visible(False)
 
     plt.tight_layout()
     if output_path:
         save_for_pub(fig, output_path)
-        print(f"Saved: {output_path}.png, {output_path}.pdf")
     return fig
 
 
@@ -911,7 +921,7 @@ def create_separate_figures(results_dir: str, output_prefix: str = None):
 
     def _save(fig, name):
         if fig is not None:
-            saved_files.append(f"{output_prefix}_{name}.png")
+            saved_files.append(f"{output_prefix}_{name}.pdf")
             plt.close(fig)
 
     # Core distributions
@@ -971,7 +981,7 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
         print("Error: No design metrics found in", results_dir)
         return None
 
-    fig = plt.figure(figsize=(15, 13))
+    fig = plt.figure(figsize=MERGED_3x3_SIZE)
 
     # Row 1
     ax1 = fig.add_subplot(3, 3, 1); prettify_ax(ax1)
@@ -988,15 +998,15 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
 
     # Panel 1: KD
     _plot_violin_strip_ax(ax1, df['raw_kras_kd'].dropna().values,
-                          'KD Distribution', 'KD (\u03bcM)',
-                          (QUALITY_THRESHOLDS['kd_excellent'], QUALITY_THRESHOLDS['kd_good']),
+                          'KD distribution', 'KD (\u03bcM)',
+                          _thr('kd')[:2],
                           higher_is_better=False, palette_idx=0)
 
     # Panel 2: Permeability
     if 'raw_permeability' in df.columns:
         _plot_violin_strip_ax(ax2, df['raw_permeability'].dropna().values,
                               'Permeability', 'log cm/s',
-                              (QUALITY_THRESHOLDS['perm_good'], QUALITY_THRESHOLDS['perm_acceptable']),
+                              _thr('perm')[:2],
                               higher_is_better=True, palette_idx=1)
     else:
         ax2.text(0.5, 0.5, 'No data', ha='center', va='center', transform=ax2.transAxes)
@@ -1004,21 +1014,28 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
 
     # Panel 3: Quality scatter
     scores = calculate_composite_score(df)
+    style_axis_vbar(ax3)
     scatter = ax3.scatter(df['raw_kras_kd'], df['raw_permeability'], c=scores,
-                         cmap='viridis', s=40, alpha=0.8, edgecolors='white', linewidth=0.4)
-    ax3.axvline(x=QUALITY_THRESHOLDS['kd_good'], color=CAT_PALETTE[2], linestyle='--', alpha=0.5)
-    ax3.axhline(y=QUALITY_THRESHOLDS['perm_good'], color=CAT_PALETTE[2], linestyle='--', alpha=0.5)
-    ax3.set_title('KD vs Permeability', fontsize=10, fontweight='bold', pad=8)
-    ax3.set_xlabel('KD (\u03bcM)', fontsize=8)
-    ax3.set_ylabel('Perm', fontsize=8)
-    plt.colorbar(scatter, ax=ax3, shrink=0.8, label='Score')
+                         cmap='viridis', s=DOT_SIZE, alpha=DOT_ALPHA, linewidths=0)
+    ax3.axvline(x=WORKFLOW_THRESHOLDS['kd'][1], color=CAT_PALETTE[2],
+                linestyle='-', alpha=0.9, linewidth=GATE_LW)
+    ax3.axhline(y=WORKFLOW_THRESHOLDS['perm'][1], color=CAT_PALETTE[1],
+                linestyle='-', alpha=0.9, linewidth=GATE_LW)
+    ax3.set_title('KD vs permeability', fontsize=TITLE_FONTSIZE, pad=4)
+    ax3.set_xlabel('KD (\u03bcM)', fontsize=XLABEL_FONTSIZE)
+    ax3.set_ylabel('Perm')
+    ax3.set_xlim(*SCATTER_KD_XLIM)
+    ax3.set_ylim(*SCATTER_PERM_YLIM)
+    annotate_offscale(ax3, df['raw_kras_kd'], df['raw_permeability'],
+                      SCATTER_KD_XLIM, SCATTER_PERM_YLIM)
+    style_colorbar(plt.colorbar(scatter, ax=ax3, shrink=0.85, aspect=22,
+                                pad=0.03), 'Score')
 
     # Panel 4: AF3 iPTM
     if 'af3_iptm' in df.columns and df['af3_iptm'].notna().sum() > 0:
         vals = df['af3_iptm'].dropna().values
         _plot_violin_strip_ax(ax4, vals, 'AF3 iPTM', 'iPTM',
-                              (QUALITY_THRESHOLDS['af3_iptm_good'],
-                               QUALITY_THRESHOLDS['af3_iptm_acceptable']),
+                              _thr('af3_iptm')[:2],
                               higher_is_better=True, palette_idx=2)
         ax4.set_ylim(min(vals) - 0.05, 1.05)
     else:
@@ -1028,9 +1045,8 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
     # Panel 5: Gnina CNN
     if 'gnina_best_cnn' in df.columns and df['gnina_best_cnn'].notna().sum() > 0:
         _plot_violin_strip_ax(ax5, df['gnina_best_cnn'].dropna().values,
-                              'Gnina CNN Affinity', 'pKd',
-                              (QUALITY_THRESHOLDS['gnina_cnn_good'],
-                               QUALITY_THRESHOLDS['gnina_cnn_acceptable']),
+                              'Gnina CNN affinity', 'pKd',
+                              _thr('gnina_cnn')[:2],
                               higher_is_better=True, palette_idx=3)
     else:
         ax5.text(0.5, 0.5, 'No Gnina data', ha='center', va='center', transform=ax5.transAxes)
@@ -1039,9 +1055,8 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
     # Panel 6: Boltz-2 probability
     if 'boltz_avg_prob' in df.columns and df['boltz_avg_prob'].notna().sum() > 0:
         vals = df['boltz_avg_prob'].dropna().values
-        _plot_violin_strip_ax(ax6, vals, 'Boltz-2 Bind Prob', 'Probability',
-                              (QUALITY_THRESHOLDS['boltz_avg_prob_good'],
-                               QUALITY_THRESHOLDS['boltz_avg_prob_acceptable']),
+        _plot_violin_strip_ax(ax6, vals, 'Boltz-2 binding prob.', 'Probability',
+                              _thr('boltz_prob')[:2],
                               higher_is_better=True, palette_idx=1)
         ax6.set_ylim(min(0, min(vals) - 0.05), 1.05)
     else:
@@ -1049,12 +1064,12 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
         ax6.axis('off')
 
     # Panel 7: Composite score
-    _plot_violin_strip_ax(ax7, scores.values, 'Composite Score', 'Score',
+    _plot_violin_strip_ax(ax7, scores.values, 'Composite score', 'Score',
                           (0.7, 0.5), higher_is_better=True, palette_idx=4)
 
     # Panel 8: Top designs table (three-line style)
     ax8.axis('off')
-    ax8.set_title('Top Designs', fontsize=10, fontweight='bold', pad=8)
+    ax8.set_title('Top designs', fontsize=TITLE_FONTSIZE, pad=4)
 
     df_t = df.copy()
     df_t['score'] = scores
@@ -1070,9 +1085,10 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
 
     table = ax8.table(cellText=[['']*n_cols for _ in range(n_rows)],
                      loc='center', cellLoc='center', bbox=[0.0, 0.05, 1.0, 0.9])
+    table.auto_set_column_width(col=list(range(n_cols)))
     for j, (col, header) in enumerate(col_defs):
         cell = table[(0, j)]
-        cell.set_text_props(text=header, fontweight='bold', fontsize=8)
+        cell.set_text_props(text=header, fontsize=BASE_FONTSIZE)
         cell.set_facecolor('white')
 
     for i, (_, row) in enumerate(df_top.iterrows()):
@@ -1080,7 +1096,7 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
             cell = table[(i+1, j)]
             val = row[col]
             text = str(val) if col == 'design_id' else ('-' if pd.isna(val) else f'{val:.2f}')
-            cell.set_text_props(text=text, fontsize=7)
+            cell.set_text_props(text=text, fontsize=TABLE_FONTSIZE)
 
     table.auto_set_font_size(False)
     for (row_idx, col_idx), cell in table.get_celld().items():
@@ -1088,7 +1104,7 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
         cell.set_linewidth(0)
         cell.set_height(0.11)
         if row_idx > 0 and row_idx % 2 == 0:
-            cell.set_facecolor('#F5F5F5')
+            cell.set_facecolor('#F7F7F7')
         elif row_idx > 0:
             cell.set_facecolor('white')
 
@@ -1096,13 +1112,15 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
     xl, xr = bbox_t[0], bbox_t[0] + bbox_t[2]
     yb, yt = bbox_t[1], bbox_t[1] + bbox_t[3]
     rh = bbox_t[3] / n_rows
-    line_kw = dict(color='black', linewidth=1.0, transform=ax8.transAxes, clip_on=False)
+    line_kw = dict(color='#333333', linewidth=RULE_LW, transform=ax8.transAxes,
+                   clip_on=False)
     ax8.plot([xl, xr], [yt, yt], **line_kw)
     ax8.plot([xl, xr], [yt - rh, yt - rh], **line_kw)
     ax8.plot([xl, xr], [yb, yb], **line_kw)
 
     # Panel 9: Timeline
-    ax9.set_title('Timeline', fontsize=10, fontweight='bold', pad=8)
+    style_axis_hbar(ax9)
+    ax9.set_title('Timeline', fontsize=TITLE_FONTSIZE, pad=4)
     steps = [
         {'name': 'RL Opt.', 'start': 0, 'duration': 60},
         {'name': 'Filter', 'start': 60, 'duration': 5},
@@ -1114,25 +1132,26 @@ def create_merged_figure(results_dir: str, output_prefix: str = None):
     colors_t = [CAT_PALETTE[i % len(CAT_PALETTE)] for i in range(len(steps))]
     y_pos_t = list(range(len(steps)-1, -1, -1))
     for i, (step, yp) in enumerate(zip(steps, y_pos_t)):
-        ax9.barh(yp, step['duration'], left=step['start'], height=0.6,
-                color=colors_t[i], edgecolor='white', linewidth=0.5)
-        ax9.text(-0.5, yp, step['name'], ha='right', va='center', fontsize=7)
-    ax9.barh(-1, total_time, left=0, height=0.6, color=GRAY, alpha=0.8)
-    ax9.text(-0.5, -1, f"~{total_time/60:.1f}h", ha='right', va='center',
-             fontsize=7, fontweight='bold')
-    ax9.set_xlabel('Time (min)', fontsize=8)
-    ax9.set_xlim(-1, total_time * 1.1)
+        ax9.barh(yp, step['duration'], left=step['start'], height=0.55,
+                color=colors_t[i], edgecolor='white', linewidth=BAR_EDGE_LW)
+        ax9.text(-total_time * 0.015, yp, step['name'], ha='right', va='center',
+                 fontsize=BASE_FONTSIZE)
+    ax9.barh(-1, total_time, left=0, height=0.55, color=GRAY, alpha=0.8,
+             edgecolor='white', linewidth=BAR_EDGE_LW)
+    ax9.text(-total_time * 0.015, -1, f"~{total_time/60:.1f}h", ha='right',
+             va='center', fontsize=BASE_FONTSIZE)
+    ax9.set_xlabel('Time (min)', fontsize=XLABEL_FONTSIZE)
+    ax9.set_xlim(0, total_time * 1.03)
     ax9.set_ylim(-2, len(steps))
     ax9.set_yticks([])
-    ax9.xaxis.grid(True, linestyle='--', alpha=0.4)
     ax9.spines['left'].set_visible(False)
 
     plt.tight_layout()
-    save_for_pub(fig, output_prefix, include_raster=True)
+    save_for_pub(fig, output_prefix)
     plt.close(fig)
 
-    print(f"\nSaved merged figure: {output_prefix}.png, {output_prefix}.pdf")
-    return f"{output_prefix}.png"
+    print(f"\nSaved merged figure: {output_prefix}.pdf")
+    return f"{output_prefix}.pdf"
 
 
 # ============================================================
