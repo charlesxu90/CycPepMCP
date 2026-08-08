@@ -115,6 +115,9 @@ def main(argv: list[str] | None = None) -> int:
                                               ("peptide", "macrocycle", "stapled")):
             n_drop_modality += 1
             continue
+        # Pass-through target_side / target_name / target_chembl_id so the
+        # multitask dedup key below sees them. These columns originate from
+        # the upstream merge step (see `merge_sources.collect_raw`).
         out_rows.append({
             "target_name": r.get("target_name", ""),
             "target_id": args.target_id,
@@ -129,13 +132,23 @@ def main(argv: list[str] | None = None) -> int:
             "assay_type": r.get("assay_type", ""),
             "source": r.get("source", r.get("document_chembl_id",
                                             r.get("patent_id", r["__source_file"]))),
+            # Carry the per-row target side (e.g. mdm2 vs mdmx) and the
+            # target-specific accession so the dedup key below can keep
+            # different sides of the same compound as separate rows.
+            "target_chembl_id": r.get("target_chembl_id", ""),
+            "target_side_inferred": (r.get("target_side") or "").strip().lower(),
         })
 
-    # Deduplicate by (smiles, endpoint_type) — keep median activity per pair.
+    # Deduplicate by (smiles, endpoint_type, target_chembl_id) — keep median
+    # activity per group. Including target_chembl_id (UniProt) preserves the
+    # MDM2 vs MDMX distinction for compounds tested against both proteins.
     df_out = pd.DataFrame(out_rows)
     if len(df_out):
-        df_out["p_activity"] = df_out.groupby(["smiles", "endpoint_type"])["p_activity"].transform("median")
-        df_out = df_out.drop_duplicates(subset=["smiles", "endpoint_type"], keep="first")
+        dedup_keys = ["smiles", "endpoint_type", "target_chembl_id"]
+        df_out["p_activity"] = (df_out.groupby(dedup_keys)["p_activity"]
+                                        .transform("median"))
+        df_out = df_out.drop_duplicates(subset=dedup_keys, keep="first")
+        df_out = df_out.drop(columns=["target_side_inferred"], errors="ignore")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     df_out.to_csv(args.output, index=False)
