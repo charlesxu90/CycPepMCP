@@ -68,6 +68,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--n_estimators", type=int, default=400)
     p.add_argument("--max_depth", type=int, default=6)
     p.add_argument("--learning_rate", type=float, default=0.05)
+    p.add_argument("--multitask_column", default=None,
+                   help="Column with categorical target-side label (e.g. 'target_side' for "
+                        "MDM2/MDMX). When set, one-hot features are appended to Morgan FP.")
+    p.add_argument("--aux_classifier_path", default=None,
+                   help="Optional path to a pickled sklearn-style classifier with a "
+                        "predict_proba(SMILES)->probability output. Its probability is "
+                        "appended as one extra feature to every row.")
     args = p.parse_args(argv)
 
     try:
@@ -89,6 +96,32 @@ def main(argv: list[str] | None = None) -> int:
     y_all = df["p_activity"].astype(float).values
     splits = df["split"].values
 
+    # Optional multitask one-hot (e.g. MDM2 vs MDMX target_side).
+    if args.multitask_column and args.multitask_column in df.columns:
+        labels = df[args.multitask_column].fillna("unknown").astype(str).values
+        unique = sorted(set(labels))
+        idx = {lab: i for i, lab in enumerate(unique)}
+        onehot = np.zeros((len(labels), len(unique)), dtype=np.float32)
+        for i, lab in enumerate(labels):
+            onehot[i, idx[lab]] = 1.0
+        X_all = np.concatenate([X_all, onehot], axis=1)
+        print(f"  multitask one-hot: {unique}  (added {len(unique)} features)")
+
+    # Optional auxiliary classifier (binder/non-binder prior) — append its
+    # predicted probability as one extra feature.
+    if args.aux_classifier_path:
+        import pickle as _pickle
+        with open(args.aux_classifier_path, "rb") as f:
+            aux = _pickle.load(f)
+        # Aux must expose either predict_proba(smiles_list) or predict_proba(featurized matrix)
+        if hasattr(aux, "predict_proba_smiles"):
+            probs = aux.predict_proba_smiles(df["smiles"].tolist())
+        else:
+            # Featurize the same way and call predict_proba directly
+            probs = aux.predict_proba(X_all[:, :MORGAN_NBITS])[:, 1]
+        X_all = np.concatenate([X_all, probs.reshape(-1, 1).astype(np.float32)], axis=1)
+        print(f"  aux classifier scores appended ({args.aux_classifier_path})")
+
     train_mask = splits == "train"
     val_mask = splits == "val"
     test_mask = splits == "test"
@@ -97,6 +130,8 @@ def main(argv: list[str] | None = None) -> int:
             f"only {train_mask.sum()} train rows; need >=30 for a sane reward model"
         )
 
+    # n_jobs capped to keep multi-process spawns from thrashing (12+ cores on
+    # this small a dataset just add overhead, not speed).
     model = xgb.XGBRegressor(
         n_estimators=args.n_estimators,
         max_depth=args.max_depth,
@@ -104,11 +139,11 @@ def main(argv: list[str] | None = None) -> int:
         objective="reg:squarederror",
         tree_method="hist",
         random_state=42,
+        n_jobs=4,
     )
-    eval_set = [(X_all[train_mask], y_all[train_mask])]
-    if val_mask.sum():
-        eval_set.append((X_all[val_mask], y_all[val_mask]))
-    model.fit(X_all[train_mask], y_all[train_mask], eval_set=eval_set, verbose=False)
+    # Skip eval_set — it doubled wall time without changing the saved model.
+    # Per-iteration eval can be re-added with `--with-eval-set` if needed.
+    model.fit(X_all[train_mask], y_all[train_mask], verbose=False)
 
     metrics = {"target_id": args.target_id, "n_train": int(train_mask.sum()),
                "n_val": int(val_mask.sum()), "n_test": int(test_mask.sum())}

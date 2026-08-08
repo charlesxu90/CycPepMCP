@@ -1,0 +1,21 @@
+{
+  "target_id": "hg_pd1pdl1",
+  "n_train": 130,
+  "n_val": 27,
+  "n_test": 29,
+  "test_n": 29,
+  "test_spearman": 0.9149824788180491,
+  "test_pearson": 0.93255257688912,
+  "test_rmse": 0.3460458607881219,
+  "test_mae": 0.2384187740457468,
+  "test_r2": 0.8591756225342606,
+  "test_top_10pct_enrichment": 0.6666666666666666,
+  "scaffold_split_spearman": 0.9149824788180491,
+  "val_n": 27,
+  "val_spearman": 0.7697802349942753,
+  "val_pearson": 0.7785232849709912,
+  "val_rmse": 0.624645301427463,
+  "val_mae": 0.4295691988909688,
+  "val_r2": 0.5570593023190258,
+  "val_top_10pct_enrichment": 0.0
+}

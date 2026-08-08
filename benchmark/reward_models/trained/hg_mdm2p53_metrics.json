@@ -1,0 +1,21 @@
+{
+  "target_id": "hg_mdm2p53",
+  "n_train": 487,
+  "n_val": 104,
+  "n_test": 106,
+  "test_n": 106,
+  "test_spearman": 0.5974762582579245,
+  "test_pearson": 0.6207003826192724,
+  "test_rmse": 1.321520853692114,
+  "test_mae": 0.9877409675166292,
+  "test_r2": 0.3406251567349976,
+  "test_top_10pct_enrichment": 0.5454545454545454,
+  "scaffold_split_spearman": 0.5974762582579245,
+  "val_n": 104,
+  "val_spearman": 0.7142209230292117,
+  "val_pearson": 0.7493478826441993,
+  "val_rmse": 1.1381345257202988,
+  "val_mae": 0.779478157556974,
+  "val_r2": 0.5067794711370985,
+  "val_top_10pct_enrichment": 0.7
+}
