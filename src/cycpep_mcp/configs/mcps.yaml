@@ -1,5 +1,5 @@
 mcps:
-  ADCP_mcp:
+  adcp_mcp:
     dependencies: []
     description: '> MCP tools for cyclic peptide conformational sampling and analysis
       using AutoDock CrankPep'

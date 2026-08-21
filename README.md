@@ -112,7 +112,7 @@ These require conda environments (run `quick_setup.sh` in each MCP directory):
 
 | MCP | Description |
 |-----|-------------|
-| `ADCP_mcp` | AutoDock CrankPep conformational sampling |
+| `adcp_mcp` | AutoDock CrankPep conformational sampling |
 | `cyc_builder_mcp` | MCTS + fragment assembly cyclic peptide design |
 | `cyclicpeptide_mcp` | Cyclic peptide drug design & virtual screening |
 | `cycpeptmp_mcp` | Multi-level feature permeability prediction |

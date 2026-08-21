@@ -172,6 +172,9 @@ docker cp <container_id>:/app/jobs/<job_id>/job.log <output_dir>/binder_<job_id>
 
 # 3. Job metadata
 docker cp <container_id>:/app/jobs/<job_id>/metadata.json <output_dir>/binder_<job_id>_metadata.json
+
+# 4. Best-checkpoint metrics, including iPAE (not present in the log)
+docker cp <container_id>:/app/jobs/<job_id>/output_metrics.json <output_dir>/binder_<job_id>_metrics.json
 ```
 
 **Expected output directory after this step:**
@@ -180,6 +183,7 @@ docker cp <container_id>:/app/jobs/<job_id>/metadata.json <output_dir>/binder_<j
   binder_<job_id>.pdb           # Designed complex structure
   binder_<job_id>.log           # Full optimization log
   binder_<job_id>_metadata.json # Job parameters and timestamps
+  binder_<job_id>_metrics.json  # pLDDT, PAE, iPAE, iPTM, pTM at the best checkpoint
 ```
 
 For multiple design runs targeting the same protein, repeat Steps 2-4 with different parameters. All outputs accumulate in the same output directory, each prefixed with its job ID.
@@ -260,14 +264,38 @@ print(f'Wrote {len(rows)} designs to {output_dir}/afcycdesign_results.csv')
 "
 ```
 
-**Quality Thresholds:**
-| Metric | Excellent | Good | Acceptable |
-|--------|-----------|------|------------|
-| pLDDT | > 0.90 | > 0.70 | > 0.50 |
-| iPTM | > 0.80 | > 0.60 | > 0.40 |
-| iPAE | < 0.11 | < 0.15 | < 0.20 |
+**Design Classification:**
 
-**Note on final metrics:** The hard-phase (final) metrics are typically lower than the best logits-phase metrics. This is expected — logits-phase uses soft probabilities while hard-phase evaluates the actual discrete sequence. Assess quality based on the final hard-phase values.
+Designs are classified on pLDDT and iPAE, the two metrics that gate selection. Tiers are nested (Excellent implies Good implies Acceptable); a design is reported at the highest tier it meets.
+
+| Class | pLDDT | iPAE |
+|-------|-------|------|
+| Excellent | > 0.90 | < 0.11 |
+| Good | > 0.85 | < 0.15 |
+| Acceptable | > 0.70 | < 0.30 |
+
+Designs meeting none of the three are Unclassified and should not be carried forward.
+
+pLDDT is on the **0-1 scale** used in `afcycdesign_results.csv` and the optimization log. The PDB B-factor column stores the same quantity x 100, so a threshold of 0.90 here equals 90 in the deposited structure.
+
+**Ranking Score:**
+
+```
+Score = 0.50 * pLDDT + 0.50 * (1 - iPAE)
+```
+
+Equal weight on the two gating metrics. iPTM and pTM are not included: on the MDM2 reference set they correlate with pLDDT and iPAE at r > 0.96, and removing them shifted ranks by a mean of 0.8 positions. They remain in the results table as reported metrics.
+
+**iPAE is required for both.** iPAE is *not* emitted by `submit_binder_design`. The design script computes it but ColabDesign filters it out of the streaming log (it carries no loss weight), so it never reaches `job.log` or the summary CSV. Two sources supply it:
+
+1. `<job_dir>/output_metrics.json`, written by `cyclic_binder_design.py` alongside `output.pdb` — collect it in Step 4 (see below).
+2. Re-prediction of the designed sequence via `submit_complex_prediction` / `cycpep_target_complex_pred.py --save_json`, which is the stricter and preferred evaluation.
+
+Without iPAE, `afcycdesign_viz.py` substitutes a `1 - loss/5` proxy. The proxy ranks designs differently from true iPAE — on the MDM2 set the top-ranked design changed identity — so classification must not be reported off the proxy.
+
+**Note on which metrics describe the saved structure:** `model.save_pdb()` writes the **best** checkpoint, and `output_metrics.json` reports that same checkpoint. The final log line reports the **last** iteration, which is generally worse. Prefer `output_metrics.json`; if parsing the log instead, be aware its values may not describe the deposited coordinates.
+
+**Note on re-prediction:** design-time metrics are optimistic. On the MDM2 reference set, re-prediction with AF-multimer (6 recycles) dropped pLDDT by a mean of 0.20 and left only 16 of 50 designs at Acceptable or better. Classify on re-predicted values whenever a downstream decision depends on them.
 
 ### Step 6: Visualize Results
 
@@ -292,14 +320,14 @@ The script auto-detects `afcycdesign_results.csv` in the output directory (gener
 **Generated Figures (saved to output directory):**
 | Panel | Title | Description |
 |-------|-------|-------------|
-| 1 | pLDDT Scores | Bar chart sorted descending, thresholds at 0.70/0.50 |
-| 2 | Interface iPAE | Bar chart sorted ascending, thresholds at 0.15/0.20 |
+| 1 | pLDDT Scores | Bar chart sorted descending, thresholds at 0.90/0.70 |
+| 2 | Interface iPAE | Bar chart sorted ascending, thresholds at 0.11/0.30 |
 | 3 | Quality Scatter | pLDDT vs iPAE colored by composite score with "good zone" |
 | 4 | Design Ranking | Horizontal bar chart by composite score |
 | 5 | Metrics Table | Top designs: pLDDT, iPAE, iPTM, pTM, i_con |
 | 6 | iPTM Scores | Interface pTM bar chart, thresholds at 0.60/0.40 |
 
-**Composite Score:** `0.30 * pLDDT + 0.30 * iPAE_inv + 0.25 * iPTM + 0.15 * pTM`
+**Composite Score:** `0.50 * pLDDT + 0.50 * (1 - iPAE)` (see Design Classification in Step 5)
 
 **Final output directory structure:**
 ```
@@ -346,10 +374,13 @@ Present results in this format:
 ...
 
 ### Quality Metrics
-- **Final Loss:** {loss}
 - **pLDDT:** {plddt}
+- **iPAE:** {i_pae}
+- **Class:** {Excellent | Good | Acceptable | Unclassified}
+- **Score:** {0.50 * plddt + 0.50 * (1 - i_pae)}
 - **pTM:** {ptm}
 - **iPTM:** {i_ptm}
+- **Final Loss:** {loss}
 
 ### Output Files
 - Complex PDB: `{output_dir}/binder_{job_id}.pdb`

@@ -87,6 +87,41 @@ QUALITY_THRESHOLDS = {
     'ptm_acceptable':   _AF_PRIMARY['ptm_min'],
 }
 
+# Three-tier pLDDT/iPAE classification. workflows.yaml carries a two-tier gate
+# (primary / excellent); these tiers are declared locally so the benchmark gates
+# used by other workflows stay untouched. Tiers are nested: Excellent < Good <
+# Acceptable. pLDDT is on the 0-1 scale used in afcycdesign_results.csv.
+DESIGN_CLASSES = (
+    ('Excellent',  {'plddt_min': 0.90, 'ipae_max': 0.11}),
+    ('Good',       {'plddt_min': 0.85, 'ipae_max': 0.15}),
+    ('Acceptable', {'plddt_min': 0.70, 'ipae_max': 0.30}),
+)
+
+# Threshold lines drawn on the pLDDT and iPAE panels follow the classification
+# above: '_good' is the tightest line (Excellent), '_acceptable' the outer gate.
+QUALITY_THRESHOLDS.update({
+    'plddt_good':       DESIGN_CLASSES[0][1]['plddt_min'],
+    'plddt_acceptable': DESIGN_CLASSES[2][1]['plddt_min'],
+    'ipae_good':        DESIGN_CLASSES[0][1]['ipae_max'],
+    'ipae_acceptable':  DESIGN_CLASSES[2][1]['ipae_max'],
+})
+
+
+def classify_designs(df):
+    """Assign each design its highest matching tier from DESIGN_CLASSES.
+
+    Returns a Series of class names; designs meeting no tier are 'Unclassified'.
+    Requires pLDDT and iPAE columns -- returns all 'Unclassified' without them.
+    """
+    if 'pLDDT' not in df.columns or 'iPAE' not in df.columns:
+        return pd.Series(['Unclassified'] * len(df), index=df.index)
+
+    out = pd.Series(['Unclassified'] * len(df), index=df.index)
+    for name, gate in reversed(DESIGN_CLASSES):
+        hit = (df['pLDDT'] > gate['plddt_min']) & (df['iPAE'] < gate['ipae_max'])
+        out[hit] = name
+    return out
+
 # AF2 hallucination loss has no gate in workflows.yaml; these are the
 # viz-internal context lines used when a run predates iPAE reporting.
 LOSS_THRESHOLDS = {'good': 2.0, 'acceptable': 3.0}
@@ -280,9 +315,14 @@ def generate_mock_data(n_designs=8) -> pd.DataFrame:
 def calculate_composite_score(df: pd.DataFrame) -> pd.Series:
     """Calculate composite quality score for ranking designs.
 
-    Score = 0.30 * pLDDT + 0.30 * iPAE_inv + 0.25 * iPTM + 0.15 * pTM
+    Score = 0.50 * pLDDT + 0.50 * (1 - iPAE)
 
-    All normalized 0-1; iPAE inverted since lower=better.
+    pLDDT and iPAE are the two metrics that gate design selection, so the score
+    weights them equally and drops the iPTM/pTM terms, which are near-collinear
+    with them (r > 0.96 on the MDM2 set) and shifted ranks by <1 position.
+
+    When iPAE is unavailable the loss proxy (1 - loss/5) is substituted, as
+    before, so runs predating iPAE reporting still rank.
     """
     scores = pd.DataFrame(index=df.index)
 
@@ -292,7 +332,7 @@ def calculate_composite_score(df: pd.DataFrame) -> pd.Series:
 
     # iPAE: lower is better. Normalize: 0 to 0.5 range
     if 'iPAE' in df.columns:
-        scores['iPAE'] = (1 - (df['iPAE'] / 0.5).clip(0, 1))
+        scores['iPAE'] = (1 - df['iPAE'].clip(0, 1))
     elif 'loss' in df.columns:
         # Fallback: use loss as proxy for iPAE (normalize: 0-5 range)
         scores['iPAE'] = (1 - (df['loss'] / 5.0).clip(0, 1))
@@ -305,7 +345,7 @@ def calculate_composite_score(df: pd.DataFrame) -> pd.Series:
     if 'pTM' in df.columns:
         scores['pTM'] = df['pTM'].clip(0, 1)
 
-    weights = {'pLDDT': 0.30, 'iPAE': 0.30, 'iPTM': 0.25, 'pTM': 0.15}
+    weights = {'pLDDT': 0.50, 'iPAE': 0.50}
 
     composite = pd.Series(0.0, index=df.index)
     total_weight = 0
