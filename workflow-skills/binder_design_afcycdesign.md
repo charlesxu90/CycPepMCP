@@ -396,12 +396,12 @@ python workflow-skills/scripts/afcycdesign/afcycdesign_viz.py <output_dir>/repre
 **Generated Figures (saved to output directory):**
 | Panel | Title | Description |
 |-------|-------|-------------|
-| 1 | pLDDT Scores | Bar chart sorted descending, thresholds at 0.90/0.70 |
-| 2 | Interface iPAE | Bar chart sorted ascending, thresholds at 0.11/0.30 |
+| 1 | pLDDT Scores | Violin + box + strip distribution, thresholds at 0.90/0.70 |
+| 2 | Interface iPAE | Violin + box + strip distribution, thresholds at 0.11/0.30 |
 | 3 | Quality Scatter | pLDDT vs iPAE colored by composite score with "good zone" |
-| 4 | Design Ranking | Horizontal bar chart by composite score |
+| 4 | Design Ranking | Violin + box + strip distribution of composite scores |
 | 5 | Metrics Table | Top designs: pLDDT, iPAE, iPTM, pTM, i_con |
-| 6 | iPTM Scores | Interface pTM bar chart, thresholds at 0.60/0.40 |
+| 6 | iPTM Scores | Violin + box + strip distribution, thresholds at 0.60/0.40 |
 
 **Composite Score:** `0.50 * pLDDT + 0.50 * (1 - iPAE)` (see Design Classification in Step 5)
 

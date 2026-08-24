@@ -3,12 +3,12 @@
 AfCycDesign Pipeline Visualization Script
 
 Generates separate figures after binder design workflow:
-1. pLDDT Scores - Bar chart of pLDDT sorted descending
-2. Interface iPAE - Bar chart of iPAE scores sorted ascending
+1. pLDDT Scores - Violin + strip distribution of pLDDT scores
+2. Interface iPAE - Violin + strip distribution of iPAE scores
 3. Quality Scatter - pLDDT vs iPAE colored by composite score
-4. Design Ranking - Horizontal bar chart by composite score
+4. Design Ranking - Violin + strip distribution of composite scores
 5. Metrics Table - Top designs with all metrics
-6. iPTM Scores - Bar chart of interface pTM scores
+6. iPTM Scores - Violin + strip distribution of interface pTM scores
 
 Every figure is saved as a print-sized PDF only (no PNG/SVG), styled through
 `workflow-skills/scripts/plot_style_utils.py`: Arial at 6-7 pt, 0.3 pt axes,
@@ -59,7 +59,8 @@ from benchmark.configs import thresholds as cfg  # noqa: E402
 FIGSIZE = PANEL_SIZE
 
 
-# Adaptive figure size based on number of designs
+# Adaptive figure size based on number of designs.
+# Retained for per-design bar panels; the metric panels are all distributions.
 def adaptive_figsize(n_designs, base_mm=BAR_MM):
     """Print width for a per-design bar chart, widened for large design sets.
 
@@ -435,47 +436,21 @@ def plot_plddt_comparison(df: pd.DataFrame, output_path: str = None):
 # ============================================================
 
 def plot_ipae_comparison(df: pd.DataFrame, output_path: str = None):
-    """Plot 2: Bar chart of iPAE scores sorted ascending (lower = better)."""
-    n_designs = len(df)
-    figsize = adaptive_figsize(n_designs)
-    fig, ax = simple_ax(figsize=figsize)
-    style_axis_vbar(ax)
+    """Plot 2: Distribution of iPAE scores using violin + strip plot.
 
-    df_sorted = df.sort_values('iPAE', ascending=True).reset_index(drop=True)
-    x_pos = np.arange(n_designs)
-
-    colors = [get_color_for_value(v, QUALITY_THRESHOLDS['ipae_good'],
-                                   QUALITY_THRESHOLDS['ipae_acceptable'],
-                                   higher_is_better=False)
-              for v in df_sorted['iPAE']]
-
-    ax.bar(x_pos, df_sorted['iPAE'], color=colors, width=0.8,
-           edgecolor='white', linewidth=BAR_EDGE_LW)
-
-    ax.axhline(y=QUALITY_THRESHOLDS['ipae_acceptable'], color=CAT_PALETTE[1],
-               linestyle='-', alpha=0.9, linewidth=GATE_LW,
-               label=f"PASS gate iPAE (<{QUALITY_THRESHOLDS['ipae_acceptable']})")
-    ax.axhline(y=QUALITY_THRESHOLDS['ipae_good'], color=CAT_PALETTE[2],
-               linestyle='--', alpha=0.7, linewidth=CONTEXT_LW,
-               label=f"Excellent iPAE (<{QUALITY_THRESHOLDS['ipae_good']})")
-
-    ax.set_title('Interface iPAE', fontsize=TITLE_FONTSIZE, pad=4)
-    ax.set_ylabel('iPAE (lower is better)')
-    ax.set_xlabel('Design', fontsize=XLABEL_FONTSIZE)
-    ax.set_xticks(x_pos)
-
-    labels = [simplify_design_id(name) for name in df_sorted['design_id']]
-    ax.set_xticklabels(labels, fontsize=ANNOT_FONTSIZE, rotation=90, ha='center')
-    ax.set_xlim(-0.8, n_designs - 0.2)
-
-    thin_legend(ax, loc='upper left')
-
-    plt.tight_layout()
-
-    if output_path:
-        save_for_pub(fig, output_path)
-
-    return fig
+    Rendered as a distribution rather than a per-design bar chart so that the
+    standalone panel matches the merged figure and the other metric panels
+    (pLDDT, loss, iPTM), and so the panel stays readable as the design count
+    grows -- a 50-bar chart conveys the ranking but not the spread, which is
+    what the classification gates act on.
+    """
+    values = df['iPAE'].values
+    return plot_violin_strip(
+        values, 'iPAE distribution', 'iPAE (lower is better)',
+        (QUALITY_THRESHOLDS['ipae_good'], QUALITY_THRESHOLDS['ipae_acceptable']),
+        higher_is_better=False, palette_idx=0, output_path=output_path,
+        legend_loc='lower left', ylim=(0.0, max(values) + 0.05),
+        threshold_labels=('Excellent iPAE', 'PASS gate iPAE'))
 
 
 # ============================================================
