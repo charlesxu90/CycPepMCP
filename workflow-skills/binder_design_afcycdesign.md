@@ -4,7 +4,9 @@
 
 ## Overview
 
-This skill automates the complete cyclic peptide binder design workflow using the AfCycDesign MCP server. It designs cyclic peptides that bind to target protein structures using AlphaFold-based optimization.
+This skill automates the complete cyclic peptide binder design workflow using the AfCycDesign MCP server. It designs cyclic peptides that bind to target protein structures using AlphaFold-based optimization, then re-predicts each design independently to obtain the iPAE and unbiased pLDDT on which classification and ranking depend.
+
+Seven steps: validate target, submit design, monitor, collect artifacts, analyze, re-predict (Step 6), visualize. Steps 1-5 produce designs; Step 6 produces the metrics that decide which of them are real.
 
 ## Prerequisites
 
@@ -295,9 +297,81 @@ Without iPAE, `afcycdesign_viz.py` substitutes a `1 - loss/5` proxy. The proxy r
 
 **Note on which metrics describe the saved structure:** `model.save_pdb()` writes the **best** checkpoint, and `output_metrics.json` reports that same checkpoint. The final log line reports the **last** iteration, which is generally worse. Prefer `output_metrics.json`; if parsing the log instead, be aware its values may not describe the deposited coordinates.
 
-**Note on re-prediction:** design-time metrics are optimistic. On the MDM2 reference set, re-prediction with AF-multimer (6 recycles) dropped pLDDT by a mean of 0.20 and left only 16 of 50 designs at Acceptable or better. Classify on re-predicted values whenever a downstream decision depends on them.
+**Note on re-prediction:** design-time metrics are optimistic and must not be used for classification. Step 6 obtains the values that are.
 
-### Step 6: Visualize Results
+
+### Step 6: Re-predict Designed Complexes (required for classification)
+
+Design-time metrics are the quantity the optimizer maximised, not an independent assessment. Re-predict each designed sequence against the target to obtain iPAE and an unbiased pLDDT.
+
+**Why this step exists.** On the MDM2 reference set of 50 designs:
+
+| | design-time | re-predicted |
+|---|---|---|
+| pLDDT mean | 0.865 | 0.664 |
+| pLDDT SD | 0.054 | 0.127 (5.6x the variance) |
+| correlation between the two | r = 0.227 | |
+
+The design-time distribution is compressed into 0.85-0.92 because that is where `pssm_semigreedy` stops finding improvements — a ceiling artefact of the search, not a property of the designs. Re-prediction restores discrimination: 44 of 50 designs fell, but the 6 that rose were exactly the 6 best by iPAE, and the change in pLDDT correlates with re-predicted iPAE at r = -0.896. Ranking on design-time values selected a different top design (rank 1 became rank 7) than ranking on re-predicted ones.
+
+**Tool:** `mcp__afcycdesign_mcp__submit_complex_prediction`, or `cycpep_target_complex_pred.py --save_json` directly.
+
+**Settings:** AlphaFold-multimer with `num_recycles=6`, `num_models=2`, `target_flexible=True`. These are deliberately stricter than the design-time forward pass (`num_recycles=0`, AF2-ptm weights); the point is an independent test, not a repeat of the optimisation.
+
+Run one invocation per sequence rather than the script's `--peptide_seqs` batch mode: `predict_complex` calls `clear_mem()` and rebuilds the model for every sequence anyway, so batching saves nothing, but its `batch_summary.json` is written only after all sequences finish and one crash loses the whole set. Per-sequence invocation is resumable.
+
+```bash
+# Re-predict every design in <output_dir>; skips sequences already done.
+# Reads design,sequence pairs from afcycdesign_results.csv (Step 5).
+OUT=<output_dir>/repredict
+mkdir -p "$OUT"
+PDB=<absolute path to target pdb>
+
+tail -n +2 <output_dir>/afcycdesign_results.csv | while IFS=, read -r design sequence rest; do
+    [ -f "$OUT/${design}.json" ] && { echo "$design SKIP"; continue; }
+    python <afcycdesign_mcp>/scripts/cycpep_target_complex_pred.py \
+        --pdb "$PDB" --target_chain A \
+        --peptide_seq "$sequence" \
+        --num_recycles 6 --num_models 2 \
+        --output "$OUT/${design}.pdb" --save_json > "$OUT/${design}.log" 2>&1 \
+      && echo "$design DONE" || echo "$design FAILED"
+done
+```
+
+Each sequence yields `<design>.json` carrying `plddt`, `pae`, `i_pae`, `i_con`, `ptm`, and `i_ptm`. Budget roughly 90 s per design on an A100 (50 designs ~ 75 min).
+
+**Merge into the results table.** The merged CSV keeps both generations so the shift is auditable, and uses column names the visualization normalises (`i_pae` -> `iPAE`, `plddt` -> `pLDDT`):
+
+```python
+python3 - <<'EOF'
+import csv, json, os
+OUT = '<output_dir>/repredict'
+orig = {r['design']: r for r in csv.DictReader(open('<output_dir>/afcycdesign_results.csv'))}
+
+rows, missing = [], []
+for design, o in orig.items():
+    jf = os.path.join(OUT, f'{design}.json')
+    if not os.path.exists(jf):
+        missing.append(design); continue
+    m = json.load(open(jf))['metrics']
+    rows.append({'design': design, 'sequence': o['sequence'],
+                 'plddt': round(m['plddt'], 4), 'i_pae': round(m['i_pae'], 4),
+                 'i_ptm': round(m['i_ptm'], 4), 'ptm': round(m['ptm'], 4),
+                 'i_con': round(m['i_con'], 4), 'pae': round(m['pae'], 4),
+                 'design_plddt': o['plddt'], 'design_iptm': o['i_ptm'],
+                 'design_ptm': o['ptm'], 'loss': o['loss']})
+
+rows.sort(key=lambda r: r['i_pae'])
+with open(os.path.join(OUT, 'afcycdesign_results.csv'), 'w', newline='') as f:
+    w = csv.DictWriter(f, fieldnames=list(rows[0].keys())); w.writeheader(); w.writerows(rows)
+print(f'wrote {len(rows)} designs')
+if missing: print(f'MISSING {len(missing)}: {", ".join(sorted(missing))}')
+EOF
+```
+
+**Known issue.** `cycpep_target_complex_pred.py` reads the iPTM key as `metrics.get("i_pTM", metrics.get("iptm", 0))`. ColabDesign emits `i_ptm`, so unpatched copies silently record `i_ptm: 0.0` for every design; the true value appears only in the run log. Verify a non-zero `i_ptm` in the first JSON before running the full set. The patched lookup tries `i_ptm` first.
+
+### Step 7: Visualize Results
 
 Generate publication-quality figures in the output directory.
 
@@ -305,17 +379,19 @@ Generate publication-quality figures in the output directory.
 
 **Usage:**
 ```bash
-# Generate 6 separate figures in the output directory
-python workflow-skills/scripts/afcycdesign/afcycdesign_viz.py <output_dir>
+# Generate 6 separate figures (run on the Step 6 output)
+python workflow-skills/scripts/afcycdesign/afcycdesign_viz.py <output_dir>/repredict
 
 # Generate merged 2x3 summary figure
-python workflow-skills/scripts/afcycdesign/afcycdesign_viz.py <output_dir> --merged
+python workflow-skills/scripts/afcycdesign/afcycdesign_viz.py <output_dir>/repredict --merged
 
 # Custom output prefix
-python workflow-skills/scripts/afcycdesign/afcycdesign_viz.py <output_dir> --output <output_dir>/summary
+python workflow-skills/scripts/afcycdesign/afcycdesign_viz.py <output_dir>/repredict --output <output_dir>/summary
 ```
 
-The script auto-detects `afcycdesign_results.csv` in the output directory (generated in Step 5).
+**Point the script at the re-predicted table, not the design-time one.** The script auto-detects `afcycdesign_results.csv` in the directory it is given. Run against `<output_dir>/repredict` it finds the merged table from Step 6 and uses the real iPAE; run against `<output_dir>` it finds the design-time table, which has no iPAE column, and silently substitutes the `1 - loss/5` proxy.
+
+**How to tell which was used.** Panel 2 is written as `afcycdesign_ipae_comparison.pdf` when true iPAE is present and `afcycdesign_loss_comparison.pdf` when the proxy was substituted. If you see the latter, the figures are not classification-grade — the proxy ranks designs differently from true iPAE (on the MDM2 set it put a different design in first place).
 
 **Generated Figures (saved to output directory):**
 | Panel | Title | Description |
@@ -338,7 +414,12 @@ The script auto-detects `afcycdesign_results.csv` in the output directory (gener
   binder_<job_id_2>.pdb              # (if multiple runs)
   binder_<job_id_2>.log
   binder_<job_id_2>_metadata.json
-  afcycdesign_results.csv            # Summary metrics table
+  afcycdesign_results.csv            # Design-time metrics table (Step 5)
+  repredict/                         # Step 6 re-prediction
+    <design>.pdb                     #   re-predicted complex per design
+    <design>.json                    #   plddt, pae, i_pae, i_ptm, ptm, i_con
+    <design>.log                     #   prediction log
+    afcycdesign_results.csv          #   merged table -- input to Step 7
   afcycdesign_plddt_scores.pdf       # Visualization figures (vector PDF only)
   afcycdesign_ipae_comparison.pdf    # (or _loss_comparison.pdf when iPAE absent)
   afcycdesign_quality_scatter.pdf

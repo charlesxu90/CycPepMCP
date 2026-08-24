@@ -150,7 +150,7 @@ Key parameters:
 
 Automated pipeline: `workflow-skills/scripts/rfpeptides/run_pipeline.py` (parallel CPU/GPU workers, checkpoint resume)
 
-### AfCycDesign Binder Design (6 Stages)
+### AfCycDesign Binder Design (7 Stages)
 
 File: `workflow-skills/binder_design_afcycdesign.md`
 Required MCPs: afcycdesign_mcp
@@ -158,15 +158,18 @@ Required MCPs: afcycdesign_mcp
 1. **Validate Target** - Check input PDB, identify chains
 2. **Submit Binder Design** - AF2-guided optimization with optional hotspot targeting
 3. **Monitor Progress** - Poll status; expect 2-5 min JAX compilation delay
-4. **Collect Results** - Extract PDB, logs, metadata
+4. **Collect Results** - Extract PDB, logs, metadata, output_metrics.json
 5. **Analyze Results** - Parse sequence/metrics, create summary CSV
-6. **Visualize** - Generate 6 publication-quality figures
+6. **Re-predict Complexes** - AF-multimer (6 recycles) per design for iPAE and unbiased pLDDT; ~90 s/design
+7. **Visualize** - Generate 6 publication-quality figures from the re-predicted table
 
 Key parameters:
 - Optimizer: `pssm_semigreedy` (recommended) or `3stage` (120 logits + 60 soft + 10 hard iterations)
 - Binder length: 8-16 residues
-- Composite score: `0.30*pLDDT + 0.30*iPAE_inv + 0.25*iPTM + 0.15*pTM`
+- Composite score: `0.50*pLDDT + 0.50*(1 - iPAE)` on re-predicted metrics
+- Classification (nested): Excellent pLDDT>0.90 & iPAE<0.11; Good >0.85 & <0.15; Acceptable >0.70 & <0.30
 - Chain convention: target=Chain A, binder=Chain B (opposite from RFpeptides)
+- Design-time metrics are the optimizer's objective and are optimistic; classify on Step 6 values only
 
 ### HELM-GPT KRAS Binder Design (3 Phases)
 
