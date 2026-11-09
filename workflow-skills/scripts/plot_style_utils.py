@@ -366,3 +366,23 @@ def save_pdf(fig, path_prefix: str, bbox_inches: str | None = "tight") -> list:
     prefix = os.path.basename(path_prefix)
     return save_figure(fig, outdir, prefix, formats=("pdf",),
                        bbox_inches=bbox_inches)
+
+
+def restyle_panel_title(ax, bold=True, loc="left"):
+    """Move a panel's title to `loc`, dropping any leading 'a  ' panel letter.
+
+    Used when a panel drawn for a merged sheet is re-emitted as a standalone
+    figure, where the letter is meaningless. Matplotlib keeps one Text per
+    title location, so the title is looked up across all three rather than
+    through the default (centre) accessor - reading only the centre one and
+    writing back would blank a title that was set with loc='left'.
+    """
+    import re as _re
+    for src in ("center", "left", "right"):
+        text = ax.get_title(loc=src)
+        if text:
+            ax.set_title("", loc=src)
+            ax.set_title(_re.sub(r"^[a-z]\s{2,}", "", text), loc=loc,
+                         fontsize=TITLE_FONTSIZE, pad=4,
+                         fontweight="bold" if bold else "normal")
+            return
