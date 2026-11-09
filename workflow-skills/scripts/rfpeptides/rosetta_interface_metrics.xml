@@ -1,3 +1,10 @@
+<!--
+  Requires the interface_metrics.py in this directory, which substitutes both
+  %%chain%% (the peptide) and %%target%% (its partner). The copy under
+  tool-mcps/rosetta_kic_mcp substitutes only %%chain%% and will fail on this
+  file. ContactMolecularSurface is asymmetric, so binder_selector must be the
+  peptide chain; hardcoding it to chainB measured the target's surface instead.
+-->
 <ROSETTASCRIPTS>
   <SCOREFXNS>
     <ScoreFunction name="sfxn" weights="beta_nov16" />
@@ -29,7 +36,7 @@
   </MOVERS>
   <FILTERS>
     <Ddg name="ddg" threshold="50" jump="1" repeats="5" repack="1" relax_mover="min" confidence="0" scorefxn="sfxn" extreme_value_removal="1" />
-    <ContactMolecularSurface name="contact_molecular_surface" distance_weight="0.5" target_selector="chainA" binder_selector="chainB" confidence="0" />
+    <ContactMolecularSurface name="contact_molecular_surface" distance_weight="0.5" target_selector="chain%%target%%" binder_selector="chain%%chain%%" confidence="0" />
   </FILTERS>
   <SIMPLE_METRICS>
     <SapScoreMetric name="sap_score" score_selector="chain%%chain%%" />
