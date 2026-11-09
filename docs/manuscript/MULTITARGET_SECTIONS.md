@@ -11,10 +11,12 @@ file) and `CycPepMCP-SI-v4.docx`. Figures referenced:
 | Extended Data Fig. 7 | `results/figures/helmgpt_benchmark_figure.pdf` |
 
 All values below were recomputed from the campaign records on 2026-11-09 and
-agree with the rendered panels, with one exception: **the predicted K_d axis of
-Extended Data Fig. 7a is mislabelled nM and should read µM** (Figure 5 itself
-shows no K_d axis and is unaffected). The text below is written in the corrected
-unit; the panel needs relabelling before submission.
+agree with the rendered panels. The HELM-GPT sheet was regenerated on the same
+date after a unit error was found in its figure script: the affinity model emits
+log₁₀(K_d/µM), but the script labelled 10^score as nM and set the gate to 10,000
+on that scale, i.e. 10 mM. Predicted K_d now reads µM throughout and both gate
+rows of the attrition panel are recomputed at the workflow's stated 10 µM
+threshold. Figure 5 carries no K_d axis and is unaffected.
 
 ---
 
@@ -403,8 +405,10 @@ Five caveats qualify this table.
    candidate is predicted at 22.12 µM; the 20 PD-1/PD-L1 candidates that entered
    structural evaluation therefore do not satisfy the affinity gate, and the
    campaign is effectively two targets rather than three. The attrition panel of
-   Extended Data Fig. 7 shows the affinity gate removing almost nothing, which
-   reflects the threshold as applied in the run rather than the molecules.
+   Extended Data Fig. 7 is drawn at the corrected threshold, so it does not
+   descend monotonically for that arm: nothing survives the affinity gate, yet 20
+   candidates advanced, because the run applied the gate 10³-fold too loosely and
+   then selected on the Phase-1 composite.
 2. **Boltz-2 is extrapolating.** Its affinity head was trained on ligands of up to
    56 heavy atoms, whereas every candidate here exceeds that, so its values are
    directional rather than calibrated.
@@ -512,10 +516,15 @@ re-predicted complexes as described in Methods.
 > interquartile bar and per-candidate jitter, with the open circle and printed
 > value giving the median. These 20 were already selected on the Phase-1
 > composite, so each spread is a truncated one. **e**, Attrition from generation
-> to structural evaluation. The permeability term is the only Phase-1 filter that
-> binds as applied: the affinity-gate row sits flush with the parsed row because
-> the threshold was applied 10³-fold too loosely in the run; under the workflow's
-> stated 10 µM gate the counts are 3,325, 1,471 and 0 (Supplementary Table 6.4).
+> to structural evaluation, with both gate rows evaluated at the workflow's
+> stated thresholds (10 µM affinity, permeability > −6.0) rather than at the
+> thresholds the run itself applied, which were 10³-fold too loose on affinity
+> and so removed nothing. The affinity gate retains 3,325, 1,471 and 0
+> macrocycles and the two gates jointly retain 1,991, 1,354 and 0
+> (Supplementary Table 6.4). The funnel therefore steps back up for PD-1/PD-L1,
+> whose gate rows are printed as 0 because a count of zero has no position on a
+> log axis: 20 candidates advanced from an arm in which none meets the affinity
+> gate, having been selected on the Phase-1 composite.
 > **f**, Highest-composite candidate of each target, with the number of the four
 > quality gates it clears. AlphaFold3 iPTM is reported per candidate; Phase-3
 > routing prefers the Boltz-2 ligand iPTM wherever both exist, and the two are

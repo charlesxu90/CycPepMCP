@@ -3,7 +3,7 @@
 
 The campaign is 3 targets, each sampling ~12,000 macrocycles down to the 20
 that reached structural evaluation. Each panel is drawn as a standalone
-print-sized PDF and nine of them are composed onto a 3x3 summary sheet, in the
+print-sized PDF and six of them are composed onto a 2x3 summary sheet, in the
 same visual vocabulary and the same sheet layout as the AfCycDesign and
 RFpeptides benchmark figures: violin + box + strip for every per-target
 distribution, one colour per target throughout, centred plain panel titles,
@@ -13,32 +13,22 @@ Sheet panels:
 
   a  predicted Kd by target        - over the 20 that reached Phase 2
   b  predicted permeability by target
-  c  AlphaFold3 iPTM by target
+  c  Boltz-2 ligand iPTM by target
   d  Gnina CNN affinity by target
-  e  what the RL actually optimised, in objective space - the two reward
-     terms move together for one target, barely at all for another
-  f  where the ~12,000 generated macrocycles went: the permeability gate does
-     all the filtering and the affinity gate removes almost nothing
-  g  whether the Phase-1 reward survives independent structural evaluation -
-     the top 20 are reordered substantially by Phase 2
-  h  whether the two structure predictors agree on the same complexes - they
-     do not, and the composite score uses only the more optimistic of them
-  i  best candidate per target, three-line table
+  e  where the ~12,000 generated macrocycles of each arm went
+  f  best candidate per target, three-line table
 
-The gate strip over all five quality metrics stays standalone: it needs the
-full page width. Panels a-d carry no threshold line and no best-candidate
-marker, so an arm is read through its distribution rather than through its
-single luckiest candidate; the strip is where the thresholds live.
-
-Panels g and h use emphasis against the identity line, because there the
-subject is the disagreement rather than the identity of the targets.
+The remaining panels - composite score by target, Vina affinity - are written
+as standalone PDFs only; the sheet carries the four metrics that the Phase-1
+and Phase-2 gates are set on. Panels a-d carry no threshold line and no
+best-candidate marker, so an arm is read through its distribution rather than
+through its single luckiest candidate; the table footnote lists the gates.
 
 Usage: python3 helmgpt_benchmark_figure.py [--results-root DIR] [--outdir DIR]
 """
 import argparse
 import json
 import os
-import re
 import shutil
 import sys
 from pathlib import Path
@@ -78,7 +68,11 @@ KD_COL = {"kras": "raw_kras_kd", "mdm2p53": "raw_mdm2p53_kd",
           "pd1pdl1": "raw_pd1pdl1_kd"}
 
 # Phase-1 reward gates and Phase-2 quality thresholds (CLAUDE.md, HELM-GPT).
-GATES = {"kd_nm": 10000.0, "perm": -6.0, "iptm": 0.60, "cnn": 6.0}
+# Phase-1 gates are on the affinity model's own unit. prediction_utils.py
+# documents its score as log10(KD) with KD in micromolar, so 10**score is uM
+# and the gate is 10, not 10000 - the run applied 10000 against a uM value,
+# i.e. a 10 mM gate that removed nothing.
+GATES = {"kd_um": 10.0, "perm": -6.0, "iptm": 0.60, "cnn": 6.0}
 
 INK = "#333333"
 MUTED = "#8A8A8A"
@@ -97,7 +91,7 @@ def load(root):
     for target in ORDER:
         run = os.path.join(root, f"{target}_perm", RUN)
         agg = pd.read_csv(os.path.join(run, "phase1_aggregated.csv"))
-        agg["kd_nm"] = 10.0 ** agg[KD_COL[target]]
+        agg["kd_um"] = 10.0 ** agg[KD_COL[target]]
         pop[target] = agg
 
         summary = json.load(open(os.path.join(run, "phase1_summary.json")))
@@ -114,14 +108,23 @@ def load(root):
             raise SystemExit(f"{target}: track join lost rows "
                              f"({len(merged)} of {len(rank)})")
         merged["target"] = target
+        # phase3_final_ranking.csv names the column kd_nm; the values are the
+        # same 10**log10(KD/uM) as above, so only the name is wrong.
+        merged = merged.rename(columns={"kd_nm": "kd_um"})
         final.append(merged)
 
-        kd_ok = int((agg.kd_nm < GATES["kd_nm"]).sum())
+        # Both gate rows are recomputed here rather than read from the
+        # campaign summary: its rows_pass_phase1_thresholds and its
+        # rows_pass_perm_and_kd_10um were produced with the 10 mM gate and
+        # both equal the permeability-only count, which would draw the
+        # affinity gate as free.
+        kd_ok = agg.kd_um < GATES["kd_um"]
+        perm_ok = agg.raw_permeability > GATES["perm"]
         funnel[target] = {
             "generated": summary["rows_total"],
             "parsed": summary["rows_unique_valid"],
-            "kd_only": kd_ok,
-            "both": summary["rows_pass_phase1_thresholds"],
+            "kd_only": int(kd_ok.sum()),
+            "both": int((kd_ok & perm_ok).sum()),
             "selected": len(merged),
         }
     return pop, pd.concat(final, ignore_index=True), funnel
@@ -145,6 +148,13 @@ def panel_funnel(ax, funnel):
     axis carry the shape of the funnel, which is what the panel is for. The
     exact numbers are in the campaign summary and in the manuscript text.
 
+    The funnel does not descend monotonically for PD-1/PD-L1: no macrocycle of
+    that arm meets the affinity gate, yet 20 still advanced to Phase 2, because
+    the run selected on the Phase-1 composite after applying a gate 1000-fold
+    too loose. That step back up is the finding, not a plotting error. A count
+    of zero has no position on a log axis, so it is printed at the axis start
+    instead of drawn.
+
     The target key is a horizontal strip above the axes rather than a block
     inside them, and the panel carries no title of its own - on the sheet the
     letter is added above the key, and standalone the caption does the naming.
@@ -160,9 +170,15 @@ def panel_funnel(ax, funnel):
         # cannot be pasted into another document ("the requested
         # transformation would make some objects too large"). Starting at
         # XMIN is visually identical, since the axis is clipped there anyway.
-        ax.barh(ys, counts - XMIN, left=XMIN, height=height * 0.92,
-                color=COLOUR[target], linewidth=0, alpha=0.85, zorder=3,
-                label=LABEL[target])
+        ax.barh(ys, np.maximum(counts, XMIN) - XMIN, left=XMIN,
+                height=height * 0.92, color=COLOUR[target], linewidth=0,
+                alpha=0.85, zorder=3, label=LABEL[target])
+        for y, n in zip(ys, counts):
+            if n < 1:
+                ax.annotate("0", (XMIN, y), textcoords="offset points",
+                            xytext=(2, 0), ha="left", va="center",
+                            fontsize=ANNOT_FONTSIZE, color=COLOUR[target],
+                            zorder=4)
 
     thin_legend(ax, loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=3,
                 columnspacing=1.2)
@@ -213,7 +229,7 @@ def jitter_by_target(ax, final, column, ylabel, title, logy=False):
 
     if logy:
         ax.set_yscale("log")
-        # A plain decade locator labels only 10 over this 3-50 nM range, so
+        # A plain decade locator labels only 10 over this 2-70 uM range, so
         # the panel would carry a single tick. 1-3 subdivisions, spelled out
         # rather than in exponent form at this scale.
         ax.yaxis.set_major_locator(LogLocator(base=10.0, subs=(1.0, 3.0)))
@@ -228,7 +244,8 @@ def jitter_by_target(ax, final, column, ylabel, title, logy=False):
 
 
 METRIC_PANELS = [
-    ("kd", "kd_nm", "predicted $K_\\mathrm{d}$ (nM)", "Predicted $K_d$ by target", True),
+    ("kd", "kd_um", "predicted $K_\\mathrm{d}$ ($\\mu$M)",
+     "Predicted $K_d$ by target", True),
     ("permeability", "raw_permeability", "permeability (log cm s$^{-1}$)",
      "Permeability by target", False),
     ("boltz_iptm", "conf_iptm", "Boltz-2 ligand iPTM",
@@ -296,7 +313,9 @@ def panel_table(ax, final):
     all three of these were reordered to final rank 1, which is itself the
     point of the rank-shift panel. The Clears column counts the four quality
     thresholds, and is what keeps the table from reading as three clean hits:
-    KRAS-G12D's best candidate misses the AlphaFold3 one.
+    only MDM2/p53's best candidate clears all four. KRAS-G12D's misses the
+    AlphaFold3 threshold, and PD-1/PD-L1's misses the affinity gate by a
+    factor of three.
     """
     ax.axis("off")
     ax.set_title("Best candidate per target", fontsize=TITLE_FONTSIZE, pad=4)
@@ -304,12 +323,14 @@ def panel_table(ax, final):
     best = pd.concat([final[final.target == t].nlargest(1, "composite")
                       for t in ORDER]).sort_values("composite", ascending=False)
 
-    headers = ["Target", "$K_\\mathrm{d}$ nM", "perm.", "AF3", "CNN", "Clears"]
+    headers = ["Target", "$K_\\mathrm{d}$ $\\mu$M", "perm.", "AF3", "CNN",
+               "Clears"]
     rows = []
     for r in best.itertuples():
-        clears = int(r.kd_nm < GATES["kd_nm"]) + int(r.raw_permeability > GATES["perm"]) \
+        clears = int(r.kd_um < GATES["kd_um"]) \
+            + int(r.raw_permeability > GATES["perm"]) \
             + int(r.iptm > GATES["iptm"]) + int(r.cnn_affinity > GATES["cnn"])
-        rows.append([LABEL[r.target], f"{r.kd_nm:.1f}",
+        rows.append([LABEL[r.target], f"{r.kd_um:.1f}",
                      f"{r.raw_permeability:.2f}", f"{r.iptm:.2f}",
                      f"{r.cnn_affinity:.2f}", f"{clears}/4"])
 
@@ -403,7 +424,7 @@ def export_top_structures(final, results_root, outdir):
             "final_rank": int(best.final_rank),
             "helm": best.helm_seqs, "smiles": best.smiles,
             "n_heavy_atoms": int(best.n_heavy_atoms),
-            "kd_nm": round(float(best.kd_nm), 2),
+            "kd_um": round(float(best.kd_um), 2),
             "permeability": round(float(best.raw_permeability), 3),
             "boltz2_iptm": round(float(best.conf_iptm), 3),
             "af3_iptm": round(float(best.iptm), 3),
@@ -447,7 +468,7 @@ def export_top_structures(final, results_root, outdir):
     print(f"\nStructures -> {dest}")
     for m in manifest:
         print(f"  {m['target']:<11} {m['candidate_dir']:<16}"
-              f" Kd {m['kd_nm']:6.2f} nM  Boltz-2 iPTM {m['boltz2_iptm']:.2f}"
+              f" Kd {m['kd_um']:6.2f} uM  Boltz-2 iPTM {m['boltz2_iptm']:.2f}"
               f"  AF3 iPTM {m['af3_iptm']:.2f}  CNN {m['gnina_cnn']:.2f}")
     return dest
 
@@ -558,7 +579,7 @@ def main():
     for target in ORDER:
         f, g = funnel[target], final[final.target == target]
         print(f"  {LABEL[target]:<11} {f['generated']:,} -> {f['both']:,}"
-              f" -> {f['selected']}   median Kd {g.kd_nm.median():7.2f} nM"
+              f" -> {f['selected']}   median Kd {g.kd_um.median():7.2f} uM"
               f"   AF3 iPTM >= 0.60: {int((g.iptm >= GATES['iptm']).sum())}/20")
 
 
