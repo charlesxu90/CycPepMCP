@@ -32,7 +32,6 @@ Usage: python3 rfpeptides_benchmark_figure.py [--results-root DIR] [--outdir DIR
 """
 import argparse
 import os
-import re
 import shutil
 import sys
 from pathlib import Path
@@ -47,13 +46,11 @@ import pandas as pd  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from plot_style_utils import (  # noqa: E402
-    ANNOT_FONTSIZE, BASE_FONTSIZE, CAT_PALETTE, CONTEXT_LW, DOT_ALPHA,
-    DOT_SIZE, GATE_LW, LEGEND_FONTSIZE, MEDIAN_LW, PANEL_SIZE, RULE_LW,
-    MERGED_3x3_MM, SCATTER_SIZE, TABLE_FONTSIZE, TABLE_SIZE, TIER_PASS,
-    TITLE_FONTSIZE,
-    XLABEL_FONTSIZE, apply_nature_rcparams, mm_size, prettify_ax,
-    restyle_panel_title, save_pdf, simple_ax, style_axis_vbar, style_violin,
-    thin_legend,
+    ANNOT_FONTSIZE, BASE_FONTSIZE, CAT_PALETTE, CONTEXT_LW, DOT_SIZE,
+    GATE_LW, MEDIAN_LW, MERGED_3x3_MM, RULE_LW, SCATTER_SIZE,
+    TABLE_FONTSIZE, TABLE_SIZE, TIER_PASS, TITLE_FONTSIZE, XLABEL_FONTSIZE,
+    apply_nature_rcparams, mm_size, prettify_ax, restyle_panel_title,
+    save_pdf, simple_ax, style_axis_vbar, style_violin,
 )
 
 # The Stage-5 ranking score, reused verbatim from the workflow's own viz so the
@@ -71,22 +68,12 @@ LABEL = {"mdm2": "MDM2", "mcl1": "MCL1", "pdl1": "PD-L1", "gabarap": "GABARAP"}
 # Stage-4 / Stage-3 acceptance gates (CLAUDE.md "Quality Thresholds").
 GATES = {"ddg": -30.0, "sap": 35.0, "cms": 300.0, "ipae": 0.20, "plddt": 0.70}
 
-ACCENT = "#D55E00"      # the design or value carrying the argument
-NEUTRAL = "#BFBFBF"     # every other design
 INK = "#333333"
 MUTED = "#8A8A8A"       # annotation ink: present, but behind the data
 
 # Shared by panels d and e, so a target carries one colour across the figure.
 COLOUR = {"mdm2": CAT_PALETTE[0], "mcl1": CAT_PALETTE[4],
           "pdl1": CAT_PALETTE[2], "gabarap": CAT_PALETTE[3]}
-
-# The three MDM2 Stage-5 cluster representatives, in cluster order.
-MDM2_REPS = ["4HFZ_MDM2_cyclic_epitope_363", "4HFZ_MDM2_cyclic_epitope_430",
-             "4HFZ_MDM2_cyclic_epitope_412"]
-
-# Panel a and c clip a small ddG tail so the bulk of 2,000 designs stays
-# legible; the count below the floor is reported in-panel rather than dropped.
-DDG_FLOOR = -70.0
 
 # Per-target panels at the standalone size. Wider than PANEL_SIZE because
 # GABARAP and PD-L1 are long tick labels, which collide at 45 mm; this is the

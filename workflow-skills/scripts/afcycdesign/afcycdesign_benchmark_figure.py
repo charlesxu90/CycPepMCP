@@ -35,7 +35,6 @@ import os
 import re
 import shutil
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 import matplotlib
@@ -50,12 +49,11 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from plot_style_utils import (  # noqa: E402
-    ANNOT_FONTSIZE, BASE_FONTSIZE, CAT_PALETTE, CONTEXT_LW, DOT_ALPHA,
-    DOT_SIZE, GATE_LW, MEDIAN_LW, PANEL_SIZE, RULE_LW, SCATTER_SIZE,
-    TABLE_FONTSIZE, TABLE_SIZE, TITLE_FONTSIZE, VIOLIN_ALPHA, XLABEL_FONTSIZE,
+    ANNOT_FONTSIZE, BASE_FONTSIZE, CAT_PALETTE, CONTEXT_LW, DOT_SIZE,
+    GATE_LW, MEDIAN_LW, RULE_LW, SCATTER_SIZE,
+    TABLE_FONTSIZE, TABLE_SIZE, TITLE_FONTSIZE, XLABEL_FONTSIZE,
     apply_nature_rcparams, mm_size, prettify_ax, restyle_panel_title,
-    save_pdf, simple_ax, stat_box,
-    style_axis_vbar, style_violin, thin_legend,
+    save_pdf, simple_ax, style_axis_vbar, style_violin, thin_legend,
 )
 
 # Display order is worst-to-best on re-predicted pLDDT, so the eye travels in
