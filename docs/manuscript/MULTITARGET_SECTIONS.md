@@ -11,12 +11,11 @@ file) and `CycPepMCP-SI-v4.docx`. Figures referenced:
 | Extended Data Fig. 7 | `results/figures/helmgpt_benchmark_figure.pdf` |
 
 All values below were recomputed from the campaign records on 2026-11-09 and
-agree with the rendered panels. The HELM-GPT sheet was regenerated on the same
-date after a unit error was found in its figure script: the affinity model emits
-log₁₀(K_d/µM), but the script labelled 10^score as nM and set the gate to 10,000
-on that scale, i.e. 10 mM. Predicted K_d now reads µM throughout and both gate
-rows of the attrition panel are recomputed at the workflow's stated 10 µM
-threshold. Figure 5 carries no K_d axis and is unaffected.
+agree with the rendered panels. Predicted K_d is reported in nM: the HELM-GPT
+affinity models emit log₁₀(K_d/nM), as the paper's own reward transform states
+(score 0 ≡ 1 nM, score 2 ≡ 100 nM) and as the recipe reproducing its artifact
+trains. The workflow's 10 µM gate is therefore a cut at 10,000 on that scale,
+which is what the campaign applied.
 
 ---
 
@@ -106,21 +105,24 @@ for individual targets.
 
 The HELM-GPT campaign occupies a different metric space and is not comparable on
 structural confidence. Its three targets differed chiefly in predicted affinity:
-median predicted K_d over the 20 advanced candidates was 4.59 µM for KRAS-G12D
-and 4.35 µM for MDM2/p53, but 45.73 µM for PD-1/PD-L1 (Figure 5C, Extended Data
-Fig. 7a). Applying the workflow's own 10 µM affinity threshold jointly with the
-permeability threshold retains 1,991 macrocycles for KRAS-G12D and 1,354 for
-MDM2/p53 but none at all for PD-1/PD-L1, whose best single candidate is predicted
-at 22.12 µM. The PD-1/PD-L1 arm therefore advanced 20 candidates to structural
-evaluation that do not satisfy the affinity gate, and the campaign is in effect
-two targets rather than three. Notably, PD-1/PD-L1 nonetheless presented the
+median predicted K_d over the 20 advanced candidates was 4.59 nM for KRAS-G12D
+and 4.35 nM for MDM2/p53, but 45.73 nM for PD-1/PD-L1 (Figure 5C, Extended Data
+Fig. 7a), a tenfold spread that nonetheless leaves every arm an order of
+magnitude inside the workflow's 10 µM gate. That gate consequently did not bind:
+reinforcement learning drove the whole population below it, and the joint
+Phase-1 filter retains 6,698, 9,381 and 9,980 macrocycles respectively, limited
+throughout by permeability rather than by affinity. What the affinity axis
+measures here is therefore how far each reward model was driven, not a
+selection pressure that was exercised. Notably, PD-1/PD-L1 nonetheless presented the
 highest median structural confidence of the three arms (Boltz-2 ligand iPTM 0.85;
 Figure 5C), and its reward model showed top-decile enrichment of only 0.33, so
 its structural agreement should not be read as independent confirmation of
-binding. MDM2/p53 was the only target on which all four orthogonal criteria
-concurred, clearing both the interface-confidence and the Gnina CNN threshold for
-all 20 candidates while also achieving the best docking score of the campaign
-(−9.61 kcal mol⁻¹).
+binding. All four orthogonal criteria concurred on every one of the 20
+candidates for MDM2/p53 and for PD-1/PD-L1, but for only 7 of 20 for KRAS-G12D,
+which is held back by AlphaFold3 interface confidence (8 of 20 above 0.60
+against 20 of 20 for the other two arms). MDM2/p53 achieved the best docking
+score of the campaign (−9.61 kcal mol⁻¹), against −8.55 for KRAS-G12D and −6.71
+for PD-1/PD-L1.
 
 Two limitations bound the interpretation of this benchmark and are stated here
 rather than in the Discussion because they constrain what Figure 5 can be used
@@ -378,15 +380,15 @@ PAE, so the physics and structural gates are close to orthogonal.
 **Supplementary Table 6.4 | HELM-GPT three-target campaign.** Phase-1 counts are
 over all unique parseable macrocycles; all other values are over the 20
 candidates per target that entered structural evaluation. Predicted K_d is
-reported in µM, the unit of the HELM-GPT affinity predictor's training target.
+reported in nM, the unit of the HELM-GPT affinity predictors' training label.
 
 | | KRAS-G12D | MDM2/p53 | PD-1/PD-L1 |
 |---|---|---|---|
 | Unique valid HELM | 11,049 | 10,941 | 10,684 |
 | Pass, permeability > −6 | 6,698 | 9,432 | 9,980 |
-| Pass, K_d < 10 µM | 3,325 | 1,471 | 0 |
-| Pass, both gates jointly | 1,991 | 1,354 | 0 |
-| K_d, best / median (µM) | 2.53 / 4.59 | 2.88 / 4.35 | 22.12 / 45.73 |
+| Pass, K_d < 10 µM | 11,049 | 10,856 | 10,684 |
+| Pass, both gates jointly | 6,698 | 9,381 | 9,980 |
+| K_d, best / median (nM) | 2.53 / 4.59 | 2.88 / 4.35 | 22.12 / 45.73 |
 | Permeability, median (log cm s⁻¹) | −5.55 | −4.65 | −4.67 |
 | Heavy atoms, range | 57–98 | 81–90 | 77–90 |
 | Boltz-2 affinity, median | −0.203 | −0.534 | −0.574 |
@@ -397,18 +399,19 @@ reported in µM, the unit of the HELM-GPT affinity predictor's training target.
 | Gnina Vina, median / best (kcal mol⁻¹) | −5.97 / −8.55 | −6.36 / −9.61 | −5.52 / −6.71 |
 | Best composite | 0.726 | 0.635 | 0.689 |
 
-Five caveats qualify this table.
+Six caveats qualify this table.
 
-1. **The affinity gate is load-bearing and was applied too loosely in the run.**
-   The affinity predictor emits log₁₀(K_d/µM). Under the workflow's stated 10 µM
-   threshold, PD-1/PD-L1 retains no candidates at all, and its best single
-   candidate is predicted at 22.12 µM; the 20 PD-1/PD-L1 candidates that entered
-   structural evaluation therefore do not satisfy the affinity gate, and the
-   campaign is effectively two targets rather than three. The attrition panel of
-   Extended Data Fig. 7 is drawn at the corrected threshold, so it does not
-   descend monotonically for that arm: nothing survives the affinity gate, yet 20
-   candidates advanced, because the run applied the gate 10³-fold too loosely and
-   then selected on the Phase-1 composite.
+1. **The affinity gate did not bind.** The predictors emit log₁₀(K_d/nM), so
+   the workflow's 10 µM threshold is a cut at 10,000 on that scale, which is
+   what the campaign applied (`phase1_summary.json` records `kd_nm_max`
+   10000.0). Reinforcement learning drove essentially the whole population
+   below it — the weakest arm, PD-1/PD-L1, has a best of 22.12 nM and a median
+   of 45.73 nM — so permeability is the only Phase-1 filter that removes
+   anything, and the affinity figures record how far each reward model was
+   driven rather than a pressure that was exercised. The configuration has
+   since been edited to `kd_pass_log_threshold: 1.0` under a comment reading
+   the column as micromolar; on the nanomolar scale that is a 10 nM gate, and
+   a re-run would not reproduce these counts.
 2. **Boltz-2 is extrapolating.** Its affinity head was trained on ligands of up to
    56 heavy atoms, whereas every candidate here exceeds that, so its values are
    directional rather than calibrated.
@@ -425,6 +428,20 @@ Five caveats qualify this table.
 5. **PD-1/PD-L1 structural confidence is not confirmation.** It presented the
    highest median ligand iPTM of the three arms despite the weakest affinity
    distribution, and its reward model showed top-decile enrichment of only 0.33.
+   Its reward model is also the campaign's weakest-supported: 186 curated
+   activities in all (130 training), pooling 173 IC₅₀, 9 K_d and 4 EC₅₀ values,
+   and drawn entirely from PD-L1 ligands rather than from the PD-1/PD-L1
+   interface.
+6. **The Phase-3 composite ranks the Boltz-2 affinity term in the wrong
+   direction.** `affinity_pred_value` is log₁₀(IC₅₀/µM), where lower is
+   stronger, but `postprocess_phase3.py` normalizes it as higher-is-better at
+   weight 0.15. Reversing that term alone, with every other saved term
+   unchanged, moves the top-ranked candidate in all three arms (from Phase-1
+   rank 4 to 1 for KRAS-G12D, 6 to 17 for MDM2/p53 and 16 to 5 for PD-1/PD-L1;
+   mean |Δrank| 3.1–5.7 of 20). The Phase-1 selection is unaffected, since the
+   Boltz-2 term enters only at Phase 3. The composite rankings, the
+   representative structures exported from them and Extended Data Fig. 7f
+   should be regenerated once the direction is corrected.
 
 #### 6.6 Synthetic Stage-4 metric episode
 
@@ -516,16 +533,17 @@ re-predicted complexes as described in Methods.
 > interquartile bar and per-candidate jitter, with the open circle and printed
 > value giving the median. These 20 were already selected on the Phase-1
 > composite, so each spread is a truncated one. **e**, Attrition from generation
-> to structural evaluation, with both gate rows evaluated at the workflow's
-> stated thresholds (10 µM affinity, permeability > −6.0) rather than at the
-> thresholds the run itself applied, which were 10³-fold too loose on affinity
-> and so removed nothing. The affinity gate retains 3,325, 1,471 and 0
-> macrocycles and the two gates jointly retain 1,991, 1,354 and 0
-> (Supplementary Table 6.4). The funnel therefore steps back up for PD-1/PD-L1,
-> whose gate rows are printed as 0 because a count of zero has no position on a
-> log axis: 20 candidates advanced from an arm in which none meets the affinity
-> gate, having been selected on the Phase-1 composite.
+> to structural evaluation at the workflow's stated thresholds (K_d < 10 µM,
+> permeability > −6.0), recomputed from the Phase-1 population and reproducing
+> the counts the run recorded. The affinity row sits close to the parsed row in
+> every arm because reinforcement learning drove almost the whole population
+> below 10 µM; the permeability term is the only Phase-1 filter that binds, and
+> the two gates jointly retain 6,698, 9,381 and 9,980 macrocycles
+> (Supplementary Table 6.4).
 > **f**, Highest-composite candidate of each target, with the number of the four
 > quality gates it clears. AlphaFold3 iPTM is reported per candidate; Phase-3
 > routing prefers the Boltz-2 ligand iPTM wherever both exist, and the two are
-> effectively uncorrelated within target.
+> effectively uncorrelated within target. The composite that selects this
+> candidate ranks the Boltz-2 affinity term in the wrong direction
+> (Supplementary Note 6.5, caveat 6), which changes the top-ranked candidate in
+> every arm; this panel is drawn on the composite as the campaign computed it.

@@ -68,11 +68,16 @@ KD_COL = {"kras": "raw_kras_kd", "mdm2p53": "raw_mdm2p53_kd",
           "pd1pdl1": "raw_pd1pdl1_kd"}
 
 # Phase-1 reward gates and Phase-2 quality thresholds (CLAUDE.md, HELM-GPT).
-# Phase-1 gates are on the affinity model's own unit. prediction_utils.py
-# documents its score as log10(KD) with KD in micromolar, so 10**score is uM
-# and the gate is 10, not 10000 - the run applied 10000 against a uM value,
-# i.e. a 10 mM gate that removed nothing.
-GATES = {"kd_um": 10.0, "perm": -6.0, "iptm": 0.60, "cnn": 6.0}
+# Phase-1 gates and Phase-2 quality thresholds (CLAUDE.md, HELM-GPT).
+# The affinity model's score is log10(Kd / nM), not log10(Kd / uM): the paper's
+# own reward transform reads score 0 as 1 nM and score 2 as 100 nM
+# (repo/helm-gpt/agent/scoring/kras.py), and the recipe that reproduces its
+# artifact trains on 9 - p_activity. The workflow's 10 uM gate is therefore
+# 10000 on this scale, which is what the campaign applied
+# (phase1_summary.json: "kd_nm_max": 10000.0). A comment in the MCP's
+# _fallback_predict stub says uM; that stub returns random numbers and never
+# runs against the real model.
+GATES = {"kd_nm": 10000.0, "perm": -6.0, "iptm": 0.60, "cnn": 6.0}
 
 INK = "#333333"
 MUTED = "#8A8A8A"
@@ -91,7 +96,7 @@ def load(root):
     for target in ORDER:
         run = os.path.join(root, f"{target}_perm", RUN)
         agg = pd.read_csv(os.path.join(run, "phase1_aggregated.csv"))
-        agg["kd_um"] = 10.0 ** agg[KD_COL[target]]
+        agg["kd_nm"] = 10.0 ** agg[KD_COL[target]]
         pop[target] = agg
 
         summary = json.load(open(os.path.join(run, "phase1_summary.json")))
@@ -108,17 +113,14 @@ def load(root):
             raise SystemExit(f"{target}: track join lost rows "
                              f"({len(merged)} of {len(rank)})")
         merged["target"] = target
-        # phase3_final_ranking.csv names the column kd_nm; the values are the
-        # same 10**log10(KD/uM) as above, so only the name is wrong.
-        merged = merged.rename(columns={"kd_nm": "kd_um"})
         final.append(merged)
 
-        # Both gate rows are recomputed here rather than read from the
-        # campaign summary: its rows_pass_phase1_thresholds and its
-        # rows_pass_perm_and_kd_10um were produced with the 10 mM gate and
-        # both equal the permeability-only count, which would draw the
-        # affinity gate as free.
-        kd_ok = agg.kd_um < GATES["kd_um"]
+        # Recomputed from the population rather than read from the campaign
+        # summary, so the panel always shows the gate in GATES. They agree:
+        # the run recorded kd_nm_max 10000.0 and the same counts. The config
+        # has since been edited to kd_pass_log_threshold 1.0, which on this
+        # scale is 10 nM, so a re-run would not reproduce the summary.
+        kd_ok = agg.kd_nm < GATES["kd_nm"]
         perm_ok = agg.raw_permeability > GATES["perm"]
         funnel[target] = {
             "generated": summary["rows_total"],
@@ -148,12 +150,8 @@ def panel_funnel(ax, funnel):
     axis carry the shape of the funnel, which is what the panel is for. The
     exact numbers are in the campaign summary and in the manuscript text.
 
-    The funnel does not descend monotonically for PD-1/PD-L1: no macrocycle of
-    that arm meets the affinity gate, yet 20 still advanced to Phase 2, because
-    the run selected on the Phase-1 composite after applying a gate 1000-fold
-    too loose. That step back up is the finding, not a plotting error. A count
-    of zero has no position on a log axis, so it is printed at the axis start
-    instead of drawn.
+    The affinity row sits close to the parsed row because the RL drove almost
+    every macrocycle below 10 uM; permeability is what thins the population.
 
     The target key is a horizontal strip above the axes rather than a block
     inside them, and the panel carries no title of its own - on the sheet the
@@ -170,15 +168,9 @@ def panel_funnel(ax, funnel):
         # cannot be pasted into another document ("the requested
         # transformation would make some objects too large"). Starting at
         # XMIN is visually identical, since the axis is clipped there anyway.
-        ax.barh(ys, np.maximum(counts, XMIN) - XMIN, left=XMIN,
-                height=height * 0.92, color=COLOUR[target], linewidth=0,
-                alpha=0.85, zorder=3, label=LABEL[target])
-        for y, n in zip(ys, counts):
-            if n < 1:
-                ax.annotate("0", (XMIN, y), textcoords="offset points",
-                            xytext=(2, 0), ha="left", va="center",
-                            fontsize=ANNOT_FONTSIZE, color=COLOUR[target],
-                            zorder=4)
+        ax.barh(ys, counts - XMIN, left=XMIN, height=height * 0.92,
+                color=COLOUR[target], linewidth=0, alpha=0.85, zorder=3,
+                label=LABEL[target])
 
     thin_legend(ax, loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=3,
                 columnspacing=1.2)
@@ -229,7 +221,7 @@ def jitter_by_target(ax, final, column, ylabel, title, logy=False):
 
     if logy:
         ax.set_yscale("log")
-        # A plain decade locator labels only 10 over this 2-70 uM range, so
+        # A plain decade locator labels only 10 over this 3-50 nM range, so
         # the panel would carry a single tick. 1-3 subdivisions, spelled out
         # rather than in exponent form at this scale.
         ax.yaxis.set_major_locator(LogLocator(base=10.0, subs=(1.0, 3.0)))
@@ -244,7 +236,7 @@ def jitter_by_target(ax, final, column, ylabel, title, logy=False):
 
 
 METRIC_PANELS = [
-    ("kd", "kd_um", "predicted $K_\\mathrm{d}$ ($\\mu$M)",
+    ("kd", "kd_nm", "predicted $K_\\mathrm{d}$ (nM)",
      "Predicted $K_d$ by target", True),
     ("permeability", "raw_permeability", "permeability (log cm s$^{-1}$)",
      "Permeability by target", False),
@@ -313,9 +305,7 @@ def panel_table(ax, final):
     all three of these were reordered to final rank 1, which is itself the
     point of the rank-shift panel. The Clears column counts the four quality
     thresholds, and is what keeps the table from reading as three clean hits:
-    only MDM2/p53's best candidate clears all four. KRAS-G12D's misses the
-    AlphaFold3 threshold, and PD-1/PD-L1's misses the affinity gate by a
-    factor of three.
+    KRAS-G12D's best candidate misses the AlphaFold3 one.
     """
     ax.axis("off")
     ax.set_title("Best candidate per target", fontsize=TITLE_FONTSIZE, pad=4)
@@ -323,14 +313,14 @@ def panel_table(ax, final):
     best = pd.concat([final[final.target == t].nlargest(1, "composite")
                       for t in ORDER]).sort_values("composite", ascending=False)
 
-    headers = ["Target", "$K_\\mathrm{d}$ $\\mu$M", "perm.", "AF3", "CNN",
+    headers = ["Target", "$K_\\mathrm{d}$ nM", "perm.", "AF3", "CNN",
                "Clears"]
     rows = []
     for r in best.itertuples():
-        clears = int(r.kd_um < GATES["kd_um"]) \
+        clears = int(r.kd_nm < GATES["kd_nm"]) \
             + int(r.raw_permeability > GATES["perm"]) \
             + int(r.iptm > GATES["iptm"]) + int(r.cnn_affinity > GATES["cnn"])
-        rows.append([LABEL[r.target], f"{r.kd_um:.1f}",
+        rows.append([LABEL[r.target], f"{r.kd_nm:.1f}",
                      f"{r.raw_permeability:.2f}", f"{r.iptm:.2f}",
                      f"{r.cnn_affinity:.2f}", f"{clears}/4"])
 
@@ -424,7 +414,7 @@ def export_top_structures(final, results_root, outdir):
             "final_rank": int(best.final_rank),
             "helm": best.helm_seqs, "smiles": best.smiles,
             "n_heavy_atoms": int(best.n_heavy_atoms),
-            "kd_um": round(float(best.kd_um), 2),
+            "kd_nm": round(float(best.kd_nm), 2),
             "permeability": round(float(best.raw_permeability), 3),
             "boltz2_iptm": round(float(best.conf_iptm), 3),
             "af3_iptm": round(float(best.iptm), 3),
@@ -468,7 +458,7 @@ def export_top_structures(final, results_root, outdir):
     print(f"\nStructures -> {dest}")
     for m in manifest:
         print(f"  {m['target']:<11} {m['candidate_dir']:<16}"
-              f" Kd {m['kd_um']:6.2f} uM  Boltz-2 iPTM {m['boltz2_iptm']:.2f}"
+              f" Kd {m['kd_nm']:6.2f} nM  Boltz-2 iPTM {m['boltz2_iptm']:.2f}"
               f"  AF3 iPTM {m['af3_iptm']:.2f}  CNN {m['gnina_cnn']:.2f}")
     return dest
 
@@ -579,7 +569,7 @@ def main():
     for target in ORDER:
         f, g = funnel[target], final[final.target == target]
         print(f"  {LABEL[target]:<11} {f['generated']:,} -> {f['both']:,}"
-              f" -> {f['selected']}   median Kd {g.kd_um.median():7.2f} uM"
+              f" -> {f['selected']}   median Kd {g.kd_nm.median():7.2f} nM"
               f"   AF3 iPTM >= 0.60: {int((g.iptm >= GATES['iptm']).sum())}/20")
 
 
